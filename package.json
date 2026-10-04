@@ -1,0 +1,22 @@
+{
+  "name": "murattil",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/amiri-quran": "^5.3.0",
+    "onnxruntime-web": "1.24.2"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "onnxruntime-node": "1.21.0",
+    "tsx": "^4.19.0",
+    "playwright": "^1.57.0"
+  }
+}

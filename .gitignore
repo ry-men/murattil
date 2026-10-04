@@ -1,0 +1,7 @@
+node_modules
+dist
+public/models/*.onnx
+public/zipformer_quran.json
+public/quran.json
+tests/shots
+tests/audio

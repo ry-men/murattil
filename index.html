@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Murattil</title>
+  <meta name="description" content="Récitation et mémorisation du Coran, reconnaissance vocale 100 % sur l'appareil." />
+  <meta name="theme-color" content="#0f3d33" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icon-192.png" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+</head>
+<body data-screen="home">
+  <!-- ACCUEIL -->
+  <section id="s-home" class="screen">
+    <header class="top">
+      <div class="brand"><span class="brand-ar" lang="ar">مُرَتِّل</span><span class="brand-fr">Murattil</span></div>
+      <span id="engine-pill" class="pill">Moteur : vérification…</span>
+    </header>
+    <div class="home-body">
+      <div id="engine-card" class="card engine-card" hidden>
+        <h2>Installer le moteur de reconnaissance</h2>
+        <p>Téléchargement unique de 75 Mo. Ensuite, tout marche sans internet. Ta voix reste sur ton téléphone.</p>
+        <div class="progress" hidden><div class="bar"></div></div>
+        <p class="muted" id="engine-detail"></p>
+        <button id="btn-install" class="btn primary">Télécharger maintenant</button>
+      </div>
+
+      <button class="card mode-card" id="go-hifz">
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 6c-2-1.5-5-2-8-1.5v13c3-.5 6 0 8 1.5 2-1.5 5-2 8-1.5v-13c-3-.5-6 0-8 1.5Zm0 0v13" /></svg>
+        </span>
+        <span class="mode-text"><strong>Hifz · Révision</strong><span>Choisis un passage. Le texte reste caché et se dévoile pendant que tu récites. Les erreurs sont signalées.</span></span>
+      </button>
+      <button class="card mode-card" id="go-free">
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+        </span>
+        <span class="mode-text"><strong>Récitation libre</strong><span>Récite n'importe où dans le Coran. L'app retrouve la sourate et suit chaque mot.</span></span>
+      </button>
+
+      <div class="history-head"><h3>Dernières séances</h3><button id="btn-clear" class="link">Effacer</button></div>
+      <ul id="history" class="history"></ul>
+      <p class="foot muted">Moteur de reconnaissance : Tilawa (code MIT, modèle NPL-1.2 usage non commercial). 100 % hors ligne.</p>
+    </div>
+  </section>
+
+  <!-- CHOIX DU PASSAGE -->
+  <section id="s-setup" class="screen">
+    <header class="top">
+      <button class="icon-btn" data-nav="home" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+      <h1 class="top-title">Hifz · Choisir le passage</h1>
+      <span></span>
+    </header>
+    <div class="setup-body">
+      <label class="field"><span>Sourate</span>
+        <select id="sel-surah"></select>
+      </label>
+      <div class="row2">
+        <label class="field"><span>De l'ayah</span><input id="in-from" type="number" inputmode="numeric" min="1" /></label>
+        <label class="field"><span>À l'ayah</span><input id="in-to" type="number" inputmode="numeric" min="1" /></label>
+      </div>
+      <label class="toggle"><input type="checkbox" id="chk-hide" /><span>Cacher le texte (il se dévoile quand tu récites)</span></label>
+      <div class="quick">
+        <span class="muted">Raccourcis :</span>
+        <button class="chip" data-quick="1">Al-Fatiha</button>
+        <button class="chip" data-quick="18">Al-Kahf</button>
+        <button class="chip" data-quick="36">Ya-Sin</button>
+        <button class="chip" data-quick="67">Al-Mulk</button>
+        <button class="chip" data-quick="78">An-Naba</button>
+      </div>
+      <p id="setup-preview" class="preview" dir="rtl" lang="ar"></p>
+      <button id="btn-start-hifz" class="btn primary big">Commencer la récitation</button>
+    </div>
+  </section>
+
+  <!-- RÉCITATION -->
+  <section id="s-recite" class="screen">
+    <header class="top recite-top">
+      <button class="icon-btn" id="btn-quit" aria-label="Arrêter"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+      <div class="recite-title">
+        <strong id="r-title">Écoute…</strong>
+        <span id="r-sub" class="muted">Récite quelques mots</span>
+      </div>
+      <span id="mic-pill" class="pill">Micro</span>
+    </header>
+    <div id="r-scroll" class="r-scroll">
+      <div id="r-wait" class="r-wait">
+        <div class="pulse"><span></span></div>
+        <p id="r-wait-text">Récite quelques mots. L'app retrouve l'ayah toute seule.</p>
+        <p id="r-candidate" class="muted"></p>
+      </div>
+      <div id="r-text" class="mushaf" dir="rtl" lang="ar"></div>
+    </div>
+    <footer class="recite-bar">
+      <div class="meter"><div id="meter-fill"></div></div>
+      <div class="bar-row">
+        <span id="r-timer" class="timer">0:00</span>
+        <button id="btn-hint" class="btn ghost">Indice</button>
+        <button id="btn-toggle-hide" class="btn ghost">Afficher</button>
+        <button id="btn-stop" class="btn primary">Terminer</button>
+      </div>
+    </footer>
+  </section>
+
+  <!-- BILAN -->
+  <section id="s-summary" class="screen">
+    <header class="top">
+      <span></span>
+      <h1 class="top-title">Bilan de la séance</h1>
+      <span></span>
+    </header>
+    <div class="summary-body">
+      <div class="stats">
+        <div><strong id="sum-time">0:00</strong><span>Durée</span></div>
+        <div><strong id="sum-ayahs">0</strong><span>Ayahs</span></div>
+        <div><strong id="sum-mistakes">0</strong><span>Erreurs</span></div>
+        <div><strong id="sum-hints">0</strong><span>Indices</span></div>
+      </div>
+      <p id="sum-range" class="muted center"></p>
+      <h3 id="sum-mistakes-title">Erreurs à revoir</h3>
+      <ul id="sum-list" class="mistakes"></ul>
+      <div class="sum-actions">
+        <button id="btn-again" class="btn primary big">Recommencer ce passage</button>
+        <button class="btn ghost big" data-nav="home">Accueil</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- FEUILLE D'ERREUR -->
+  <dialog id="sheet" class="sheet">
+    <p id="sheet-kind" class="sheet-kind"></p>
+    <p id="sheet-verse" class="sheet-verse" dir="rtl" lang="ar"></p>
+    <h3 id="sheet-title"></h3>
+    <p id="sheet-desc" class="muted"></p>
+    <div class="sheet-actions">
+      <button id="sheet-primary" class="btn primary big"></button>
+      <button id="sheet-secondary" class="btn ghost big"></button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome", args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
+const ctx = await browser.newContext({ permissions: ["microphone"] });
+const page = await ctx.newPage();
+const errs = [];
+page.on("pageerror", (e) => errs.push(e.message)); page.on("requestfailed", (r) => console.log("FAILED", r.url(), r.failure()?.errorText)); page.on("console", (m) => console.log("console:", m.type(), m.text().slice(0,200)));
+await page.goto("http://localhost:4173/");
+await page.waitForFunction(() => window.__murattil?.engineState === "absent");
+await page.click("#btn-install");
+await page.waitForFunction(() => window.__murattil.engineState === "ready", null, { timeout: 120000 });
+await page.waitForTimeout(4000); // laisse le SW mettre en cache
+await ctx.setOffline(true);
+await page.reload();
+const t0 = Date.now();
+await page.waitForTimeout(8000);
+console.log(await page.evaluate(async () => ({ st: window.__murattil?.engineState, pill: document.getElementById("engine-pill")?.textContent, detail: document.getElementById("engine-detail")?.textContent, ctrl: !!navigator.serviceWorker.controller, cached: (await (await caches.open("murattil-v2")).keys()).map(r => r.url.replace(location.origin, "")) })));
+await page.waitForFunction(() => window.__murattil?.engineState === "ready", null, { timeout: 60000 });
+console.log(`HORS LIGNE : moteur prêt en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
+await page.click("#go-free");
+await page.waitForFunction(() => document.querySelector("#mic-pill").textContent.includes("actif"), null, { timeout: 20000 });
+console.log("HORS LIGNE : micro actif, séance lancée. Erreurs:", errs);
+await browser.close();
