@@ -4,7 +4,8 @@ import type { CorrectionAction, CorrectionState, CorrectionIssue } from "./core/
 import { Mic, type MicStatus } from "./audio";
 import { isModelCached } from "./model-cache";
 import { loadQuran, getSurah, ayahWords, hasBismillahPrefix, arNum, type Surah } from "./quran";
-import { loadHistory, saveSession, clearHistory, loadPrefs, savePrefs, type Mistake, type SessionRecord } from "./store";
+import { loadHistory, saveSession, clearHistory, loadPrefs, savePrefs, type Mistake, type SessionRecord, type MissedWord } from "./store";
+import { exportDiagnostic } from "./diagnostic";
 
 // ---------------------------------------------------------------------------
 // Utilitaires
@@ -120,6 +121,7 @@ function onWorkerMessage(msg: any) {
       stopWaiter = null;
       break;
     case "verse_match":
+      logEvent({ type: "verse_match", surah: msg.surah, ayah: msg.ayah, c: msg.confidence });
       onVerseMatch(msg.surah, msg.ayah);
       break;
     case "verse_candidate":
@@ -127,8 +129,13 @@ function onWorkerMessage(msg: any) {
       break;
     case "word_progress":
       onWordProgress(msg.surah, msg.ayah, msg.matched_indices as number[]);
+      logEvent({ type: "word_progress", surah: msg.surah, ayah: msg.ayah, w: msg.word_index, m: msg.matched_indices });
+      break;
+    case "verdicts":
+      onVerdicts(msg.data as Int16Array);
       break;
     case "correction":
+      logEvent({ type: "correction", phase: msg.state.phase, issue: msg.state.issue });
       onCorrection(msg.state as CorrectionState, msg.totalWords as number);
       break;
   }
@@ -156,12 +163,29 @@ const session = {
   hints: 0,
   correction: null as CorrectionState | null,
   lastScroll: 0,
+  verdicts: new Map<string, number>(),
+  audio: [] as Int16Array[],
+  audioLen: 0,
+  log: [] as Record<string, unknown>[],
 };
+
+const MAX_AUDIO = 16000 * 60 * 20; // 20 min max gardées pour le diagnostic
+function logEvent(e: Record<string, unknown>) {
+  if (session.active) session.log.push({ t: +((session.audioLen / 16000).toFixed(2)), ...e });
+}
 
 const mic = new Mic({
   workletUrl: new URL("audio-processor.js", BASE).toString(),
+  phoneFilters: () => loadPrefs().phoneFilters,
   onChunk: (samples) => {
-    if (session.active && engineState === "ready" && worker) worker.postMessage({ type: "audio", samples }, [samples.buffer]);
+    if (!session.active) return;
+    if (session.audioLen < MAX_AUDIO) {
+      const pcm = new Int16Array(samples.length);
+      for (let i = 0; i < samples.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, Math.round(samples[i] * 32767)));
+      session.audio.push(pcm);
+    }
+    session.audioLen += samples.length;
+    if (engineState === "ready" && worker) worker.postMessage({ type: "audio", samples }, [samples.buffer]);
   },
   onLevel: (rms) => {
     const v = Math.min(1, Math.max(0, (rms - 0.003) * 18));
@@ -191,6 +215,7 @@ function applySessionToWorker() {
     type: "set_expected",
     passage: session.mode === "hifz" && session.surah ? { surah: session.surah, ayah: session.from, ayahEnd: session.to } : null,
   });
+  worker.postMessage({ type: "set_slip", on: session.mode === "hifz" && loadPrefs().sensitive });
   worker.postMessage({ type: "reset" });
 }
 
@@ -198,6 +223,7 @@ async function startSession(mode: "libre" | "hifz", surah: number | null, from =
   Object.assign(session, {
     active: true, mode, surah, from, to, showAll: false, rendered: null,
     progress: new Map(), hinted: new Set(), ayahs: [], current: null, mistakes: [], hints: 0, correction: null,
+    verdicts: new Map(), audio: [], audioLen: 0, log: [],
   });
   session.hide = mode === "hifz" ? loadPrefs().hide : false;
   document.body.classList.toggle("hifz", mode === "hifz");
@@ -267,6 +293,7 @@ async function endSession() {
     });
   }
   const duration = session.startedAt ? (Date.now() - session.startedAt) / 1000 : 0;
+  const stats = computeWordStats();
   const rec: SessionRecord = {
     id: String(Date.now()),
     date: new Date().toISOString(),
@@ -278,11 +305,43 @@ async function endSession() {
     ayahs: [...session.ayahs],
     mistakes: session.mistakes,
     hints: session.hints,
+    validated: stats.validated,
+    total: stats.total,
+    missed: stats.missed,
   };
+  lastDiag = { audio: session.audio, log: session.log, record: rec, verdicts: [...session.verdicts] };
   if (duration > 8 || rec.ayahs.length) saveSession(rec);
   renderSummary(rec);
   renderHistory();
   show("summary");
+}
+
+let lastDiag: { audio: Int16Array[]; log: Record<string, unknown>[]; record: SessionRecord; verdicts: [string, number][] } | null = null;
+
+/** Mots récités : validés / non reconnus / faux probables. La fin non récitée de la dernière ayah ne compte pas. */
+function computeWordStats(): { total: number; validated: number; missed: MissedWord[] } {
+  const out = { total: 0, validated: 0, missed: [] as MissedWord[] };
+  const cur = session.current;
+  if (!cur) return out;
+  const surah = cur.surah;
+  const ayahs = session.mode === "hifz"
+    ? Array.from({ length: Math.max(0, cur.ayah - session.from + 1) }, (_, i) => session.from + i)
+    : [...new Set(session.ayahs.filter((k) => k.startsWith(surah + ":")).map((k) => Number(k.split(":")[1])))].sort((a, b) => a - b);
+  for (const a of ayahs) {
+    const words = ayahWords(getSurah(surah).verses[a - 1]).words;
+    let last = words.length - 1;
+    if (a === cur.ayah) {
+      last = -1;
+      words.forEach((_, i) => { const st = wordState(surah, a, i); if (st === 0 || st === 1) last = i; });
+    }
+    for (let i = 0; i <= last; i++) {
+      out.total++;
+      const st = wordState(surah, a, i);
+      if (st === 0 || st === 1) out.validated++;
+      else out.missed.push({ surah, ayah: a, word: i, text: words[i], kind: st === 2 ? "bad" : "miss" });
+    }
+  }
+  return out;
 }
 
 const firstAyah = () => (session.ayahs.length ? Number(session.ayahs[0].split(":")[1]) : null);
@@ -365,11 +424,53 @@ function setCurrentAyah(surah: number, ayah: number) {
   if (prev && prev.surah === surah && prev.ayah === ayah) return;
   $("r-text").querySelectorAll(".ayah.active").forEach((e) => e.classList.remove("active"));
   ayahEl(surah, ayah)?.classList.add("active");
-  // Les ayahs déjà dépassées : les mots non reconnus sont dévoilés en gris.
+  // Les ayahs dépassées : chaque mot est repeint (validé, non reconnu, faux probable).
   if (prev && prev.surah === surah && ayah > prev.ayah) {
-    for (let a = prev.ayah; a < ayah; a++) {
-      ayahEl(surah, a)?.querySelectorAll(".w:not(.ok)").forEach((w) => w.classList.add("seen"));
+    for (let a = (session.mode === "hifz" ? session.from : prev.ayah); a < ayah; a++) paintAyah(surah, a);
+  }
+}
+
+/** État d'un mot : 0 ok, 1 incertain, 2 faux, 3 sauté, 4 en attente, -1 inconnu. */
+function wordState(surah: number, ayah: number, w: number): number {
+  const v = session.verdicts.get(`${surah}:${ayah}:${w}`);
+  if (v !== undefined && v !== 4) return v;
+  if (session.progress.get(`${surah}:${ayah}`)?.has(w)) return 0;
+  return v ?? -1;
+}
+
+function isPassed(surah: number, ayah: number): boolean {
+  const c = session.current;
+  return !!c && c.surah === surah && ayah < c.ayah;
+}
+
+function paintAyah(surah: number, ayah: number) {
+  const el = ayahEl(surah, ayah);
+  if (!el) return;
+  const passed = isPassed(surah, ayah);
+  el.querySelectorAll<HTMLElement>(".w").forEach((w, i) => {
+    const st = wordState(surah, ayah, i);
+    const ok = st === 0 || st === 1;
+    w.classList.toggle("ok", ok);
+    const bad = passed && st === 2;
+    if (bad && !w.classList.contains("bad") && session.mode === "hifz") vibrate();
+    w.classList.toggle("bad", bad);
+    w.classList.toggle("miss", passed && !ok && st !== 2);
+  });
+}
+
+function onVerdicts(data: Int16Array) {
+  if (!session.active && document.body.dataset.screen !== "recite") return;
+  const touched = new Set<string>();
+  for (let i = 0; i < data.length; i += 4) {
+    const key = `${data[i]}:${data[i + 1]}:${data[i + 2]}`;
+    if (session.verdicts.get(key) !== data[i + 3]) {
+      session.verdicts.set(key, data[i + 3]);
+      touched.add(`${data[i]}:${data[i + 1]}`);
     }
+  }
+  for (const k of touched) {
+    const [su, a] = k.split(":").map(Number);
+    if (session.rendered === su) paintAyah(su, a);
   }
 }
 
@@ -407,7 +508,8 @@ function onWordProgress(surah: number, ayah: number, matched: number[]) {
   const words = el.querySelectorAll<HTMLElement>(".w");
   let next = -1;
   words.forEach((w, i) => {
-    const ok = set!.has(i);
+    const st = wordState(surah, ayah, i);
+    const ok = set!.has(i) || st === 0 || st === 1;
     w.classList.toggle("ok", ok);
     if (!ok && next < 0) next = i;
   });
@@ -526,7 +628,7 @@ function giveHint() {
   const ayah = session.current?.ayah ?? session.from;
   for (let a = ayah; a <= session.to; a++) {
     const el = ayahEl(session.surah, a);
-    const w = el?.querySelector<HTMLElement>(".w:not(.ok):not(.hint):not(.seen)");
+    const w = el?.querySelector<HTMLElement>(".w:not(.ok):not(.hint):not(.miss):not(.bad)");
     if (w) {
       w.classList.add("hint");
       session.hints++;
@@ -560,28 +662,33 @@ function rangeLabel(r: SessionRecord): string {
 let lastRecord: SessionRecord | null = null;
 function renderSummary(r: SessionRecord) {
   lastRecord = r;
+  const missed = r.missed ?? [];
   $("sum-time").textContent = fmtTime(r.durationSec);
   $("sum-ayahs").textContent = String(r.ayahs.length);
-  $("sum-mistakes").textContent = String(r.mistakes.length);
-  $("sum-hints").textContent = String(r.hints);
-  $("sum-range").textContent = rangeLabel(r);
+  $("sum-valid").textContent = r.total ? `${r.validated}/${r.total}` : "0";
+  $("sum-review").textContent = String(missed.length + r.mistakes.length);
+  $("sum-range").textContent = rangeLabel(r) + (r.hints ? ` · ${r.hints} indice${r.hints > 1 ? "s" : ""}` : "");
   const list = $("sum-list");
   list.replaceChildren();
-  $("sum-mistakes-title").hidden = r.mode !== "hifz";
-  if (r.mode === "hifz" && !r.mistakes.length) {
+  if (!missed.length && !r.mistakes.length) {
     const li = document.createElement("li");
     li.className = "empty";
-    li.textContent = "Aucune erreur détectée. Bārak Allāhu fīk.";
+    li.textContent = r.total ? "Tous les mots ont été validés. Bārak Allāhu fīk." : "Aucun mot reconnu pendant cette séance.";
     list.append(li);
   }
-  for (const m of r.mistakes) {
+  const add = (ref: string, word: string, kind: string, cls: string) => {
     const li = document.createElement("li");
-    li.innerHTML = `<span class="m-ref">${m.surah}:${m.ayah}</span><span class="m-word" lang="ar" dir="rtl"></span><span class="m-kind ${m.corrected ? "ok" : ""}">${KIND_SHORT[m.kind] ?? m.kind}${m.corrected ? " · corrigé" : ""}</span>`;
-    li.querySelector(".m-word")!.textContent = m.text;
+    li.innerHTML = `<span class="m-ref"></span><span class="m-word" lang="ar" dir="rtl"></span><span class="m-kind ${cls}"></span>`;
+    li.querySelector(".m-ref")!.textContent = ref;
+    li.querySelector(".m-word")!.textContent = word;
+    li.querySelector(".m-kind")!.textContent = kind;
     list.append(li);
-  }
+  };
+  for (const m of r.mistakes) add(`${m.surah}:${m.ayah}`, m.text, (KIND_SHORT[m.kind] ?? m.kind) + (m.corrected ? " · corrigé" : ""), m.corrected ? "ok" : "");
+  for (const m of missed.slice(0, 60)) add(`${m.surah}:${m.ayah}`, m.text, m.kind === "bad" ? "mot faux ?" : "non reconnu", m.kind === "bad" ? "" : "warn");
   $("btn-again").textContent = r.mode === "hifz" ? "Recommencer ce passage" : "Réviser ce passage en Hifz";
   $("btn-again").hidden = !r.surah;
+  $("btn-diag").hidden = !lastDiag || !lastDiag.audio.length;
 }
 
 function renderHistory() {
@@ -603,7 +710,7 @@ function renderHistory() {
     li.innerHTML = `<div><strong></strong><span class="muted"></span></div><div class="h-right"><span class="tag ${r.mode}">${r.mode === "hifz" ? "Hifz" : "Libre"}</span><span class="muted"></span></div>`;
     li.querySelector("strong")!.textContent = rangeLabel(r);
     li.querySelectorAll(".muted")[0].textContent = `${when} · ${fmtTime(r.durationSec)}`;
-    li.querySelectorAll(".muted")[1].textContent = r.mode === "hifz" ? `${r.mistakes.length} erreur${r.mistakes.length > 1 ? "s" : ""}` : `${r.ayahs.length} ayahs`;
+    li.querySelectorAll(".muted")[1].textContent = r.total ? `${r.validated}/${r.total} mots` : `${r.ayahs.length} ayahs`;
     if (r.surah) li.addEventListener("click", () => openSetup(r.surah!, r.from ?? 1, r.to ?? getSurah(r.surah!).verses.length));
     list.append(li);
   }
@@ -632,6 +739,8 @@ function openSetup(surah?: number, from?: number, to?: number) {
   $<HTMLInputElement>("in-from").value = String(Math.min(from ?? (surah ? 1 : p.from), max));
   $<HTMLInputElement>("in-to").value = String(Math.min(to ?? (surah ? max : p.to), max));
   $<HTMLInputElement>("chk-hide").checked = p.hide;
+  $<HTMLInputElement>("chk-filters").checked = p.phoneFilters;
+  $<HTMLInputElement>("chk-sensitive").checked = p.sensitive;
   updateSetup();
   show("setup");
 }
@@ -642,7 +751,7 @@ function readSetup() {
   let from = Math.max(1, Math.min(max, Number($<HTMLInputElement>("in-from").value) || 1));
   let to = Math.max(1, Math.min(max, Number($<HTMLInputElement>("in-to").value) || max));
   if (to < from) [from, to] = [to, from];
-  return { surah, from, to, max, hide: $<HTMLInputElement>("chk-hide").checked };
+  return { surah, from, to, max, hide: $<HTMLInputElement>("chk-hide").checked, phoneFilters: $<HTMLInputElement>("chk-filters").checked, sensitive: $<HTMLInputElement>("chk-sensitive").checked };
 }
 
 function updateSetup() {
@@ -698,11 +807,16 @@ async function boot() {
     updateSetup();
   }));
   $("btn-start-hifz").addEventListener("click", () => {
-    const { surah, from, to, hide } = readSetup();
-    savePrefs({ ...loadPrefs(), surah, from, to, hide });
+    const { surah, from, to, hide, phoneFilters, sensitive } = readSetup();
+    savePrefs({ ...loadPrefs(), surah, from, to, hide, phoneFilters, sensitive });
     void startSession("hifz", surah, from, to);
   });
   $("btn-stop").addEventListener("click", () => void endSession());
+  $("btn-diag").addEventListener("click", () => {
+    if (!lastDiag) return;
+    void exportDiagnostic(lastDiag).then((how) => toast(how === "share" ? "Envoie les 2 fichiers dans la conversation avec Claude." : "Fichiers téléchargés : joins-les à la conversation avec Claude.", 4500))
+      .catch((e) => toast("Export impossible : " + String(e?.message ?? e), 4000));
+  });
   $("btn-quit").addEventListener("click", () => void endSession());
   $("btn-hint").addEventListener("click", giveHint);
   $("btn-toggle-hide").addEventListener("click", toggleShowAll);

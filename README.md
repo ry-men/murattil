@@ -3,13 +3,15 @@
 App web (PWA) de récitation et de mémorisation du Coran.
 La reconnaissance vocale tourne **sur le téléphone**, sans serveur. Pas de coupure quand le réseau saute.
 
-## Ce que fait la v0.1
+## Ce que fait la v0.2
 
 - **Hifz · Révision** : choix d'une sourate et d'un passage. Le texte reste caché et se dévoile mot par mot pendant la récitation.
 - **Erreurs signalées** : mot oublié, mot différent, haraka douteuse, ayah sautée. Feuille d'erreur avec « Reprendre l'ayah » ou « C'était correct ».
 - **Récitation libre** : on récite n'importe où, l'app retrouve la sourate et suit chaque mot.
 - **Indice** : dévoile le mot suivant en cas de blocage.
-- **Bilan** : durée, ayahs, erreurs, indices. Historique des séances sur l'appareil.
+- **Bilan** : durée, ayahs, mots validés, mots à revoir (non reconnus ou faux probables). Historique sur l'appareil.
+- **Diagnostic** : export de l'audio de la séance + journal du moteur, pour analyser un problème de reconnaissance.
+- **Réglages** : détection sensible des erreurs (slip head), filtre anti-bruit du téléphone (coupé par défaut).
 - **Robustesse** : modèle en cache (IndexedDB), app en cache (service worker), écran maintenu allumé, micro relancé tout seul après une coupure (appel, casque, mise en veille).
 
 ## Lancer en local

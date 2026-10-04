@@ -3,6 +3,8 @@ export type MicStatus = "off" | "starting" | "on" | "recovering" | "denied" | "e
 
 export interface MicOptions {
   workletUrl: string;
+  /** Filtres du téléphone (anti-bruit, anti-écho). Coupés par défaut : ils mangent le début des mots. */
+  phoneFilters?: () => boolean;
   onChunk: (samples: Float32Array) => void;
   onLevel?: (rms: number) => void;
   onStatus?: (status: MicStatus, detail?: string) => void;
@@ -66,7 +68,12 @@ export class Mic {
   private async open(): Promise<void> {
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: {
+          channelCount: 1,
+          echoCancellation: this.opts.phoneFilters?.() ?? false,
+          noiseSuppression: this.opts.phoneFilters?.() ?? false,
+          autoGainControl: true,
+        },
       });
     } catch (e) {
       const name = (e as DOMException)?.name;

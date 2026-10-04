@@ -63,6 +63,8 @@
         <label class="field"><span>À l'ayah</span><input id="in-to" type="number" inputmode="numeric" min="1" /></label>
       </div>
       <label class="toggle"><input type="checkbox" id="chk-hide" /><span>Cacher le texte (il se dévoile quand tu récites)</span></label>
+      <label class="toggle"><input type="checkbox" id="chk-sensitive" /><span>Détection sensible des erreurs (plus d'erreurs repérées, parfois une fausse alerte)</span></label>
+      <label class="toggle"><input type="checkbox" id="chk-filters" /><span>Filtre anti-bruit du téléphone (seulement si tu es dans un endroit bruyant)</span></label>
       <div class="quick">
         <span class="muted">Raccourcis :</span>
         <button class="chip" data-quick="1">Al-Fatiha</button>
@@ -116,15 +118,16 @@
       <div class="stats">
         <div><strong id="sum-time">0:00</strong><span>Durée</span></div>
         <div><strong id="sum-ayahs">0</strong><span>Ayahs</span></div>
-        <div><strong id="sum-mistakes">0</strong><span>Erreurs</span></div>
-        <div><strong id="sum-hints">0</strong><span>Indices</span></div>
+        <div><strong id="sum-valid">0</strong><span>Mots validés</span></div>
+        <div><strong id="sum-review">0</strong><span>À revoir</span></div>
       </div>
       <p id="sum-range" class="muted center"></p>
-      <h3 id="sum-mistakes-title">Erreurs à revoir</h3>
+      <h3 id="sum-mistakes-title">Mots à revoir</h3>
       <ul id="sum-list" class="mistakes"></ul>
       <div class="sum-actions">
         <button id="btn-again" class="btn primary big">Recommencer ce passage</button>
         <button class="btn ghost big" data-nav="home">Accueil</button>
+        <button id="btn-diag" class="link">Envoyer l'enregistrement à Claude (diagnostic)</button>
       </div>
     </div>
   </section>

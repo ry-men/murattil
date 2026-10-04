@@ -1,5 +1,7 @@
 // Historique des séances, stocké sur l'appareil.
 export interface Mistake { surah: number; ayah: number; word: number; kind: string; text: string; corrected: boolean }
+/** Mot non validé par le moteur : "miss" non reconnu, "bad" probablement faux. */
+export interface MissedWord { surah: number; ayah: number; word: number; text: string; kind: "miss" | "bad" }
 export interface SessionRecord {
   id: string;
   date: string;
@@ -11,6 +13,9 @@ export interface SessionRecord {
   ayahs: string[];
   mistakes: Mistake[];
   hints: number;
+  validated?: number;
+  total?: number;
+  missed?: MissedWord[];
 }
 
 const KEY = "murattil.history.v1";
@@ -32,8 +37,8 @@ export function clearHistory(): void {
   try { localStorage.removeItem(KEY); } catch { /* */ }
 }
 
-export interface Prefs { hide: boolean; surah: number; from: number; to: number; fontScale: number }
-const DEFAULT_PREFS: Prefs = { hide: true, surah: 67, from: 1, to: 30, fontScale: 1 };
+export interface Prefs { hide: boolean; surah: number; from: number; to: number; fontScale: number; phoneFilters: boolean; sensitive: boolean }
+const DEFAULT_PREFS: Prefs = { hide: true, surah: 67, from: 1, to: 30, fontScale: 1, phoneFilters: false, sensitive: true };
 
 export function loadPrefs(): Prefs {
   try { return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS) || "{}") }; } catch { return { ...DEFAULT_PREFS }; }

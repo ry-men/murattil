@@ -12,6 +12,7 @@ export type ToWorker =
   | { type: "reset" }
   | { type: "set_mode"; mode: RecitationMode }
   | { type: "set_expected"; passage: ExpectedPassage | null }
+  | { type: "set_slip"; on: boolean }
   | { type: "correction_action"; action: CorrectionAction };
 
 const MODEL = "models/zipformer_a0w_ep1_a05.int8.onnx";
@@ -23,6 +24,21 @@ const CACHE_KEY = "zipformer-a0w-ep1-a05-int8";
 let session: ZipformerSession | null = null;
 let mode: RecitationMode = "tracking";
 let expected: ExpectedPassage | null = null;
+let slip = false;
+let lastVerdictsAt = 0;
+
+// Verdicts compacts : [sourate, ayah, mot, état] ; état 0 ok, 1 incertain, 2 faux, 3 sauté, 4 en attente.
+const STATE = { ok: 0, unsure: 1, wrong: 2, skipped: 3, pending: 4 } as const;
+function postVerdicts(force = false) {
+  if (!session) return;
+  const now = Date.now();
+  if (!force && now - lastVerdictsAt < 500) return;
+  lastVerdictsAt = now;
+  const v = session.verdicts();
+  const out = new Int16Array(v.length * 4);
+  v.forEach((w, i) => { out[i * 4] = w.surah; out[i * 4 + 1] = w.ayah; out[i * 4 + 2] = w.word; out[i * 4 + 3] = STATE[w.state] ?? 4; });
+  post({ type: "verdicts", data: out });
+}
 
 const post = (msg: unknown) => (self as unknown as Worker).postMessage(msg);
 
@@ -67,6 +83,7 @@ async function init(base: string): Promise<void> {
     } as Parameters<typeof ZipformerSession.create>[0]);
     session.setMode(mode);
     session.setExpected(expected);
+    session.setSlipHead(slip ? "high" : false);
     post({ type: "ready" });
   } catch (err) {
     post({ type: "error", fatal: true, message: err instanceof Error ? err.message : String(err) });
@@ -78,10 +95,10 @@ async function handle(msg: ToWorker): Promise<void> {
     case "init":
       return init(msg.base);
     case "audio":
-      if (session) for (const m of await session.feed(msg.samples)) post(m);
+      if (session) { for (const m of await session.feed(msg.samples)) post(m); postVerdicts(); }
       return;
     case "stop":
-      if (session) for (const m of await session.stop()) post(m);
+      if (session) { postVerdicts(true); for (const m of await session.stop()) post(m); postVerdicts(true); }
       post({ type: "stopped" });
       return;
     case "reset":
@@ -94,6 +111,10 @@ async function handle(msg: ToWorker): Promise<void> {
     case "set_expected":
       expected = msg.passage;
       session?.setExpected(expected);
+      return;
+    case "set_slip":
+      slip = msg.on;
+      session?.setSlipHead(slip ? "high" : false);
       return;
     case "correction_action":
       if (session) for (const m of session.correct(msg.action)) post(m);

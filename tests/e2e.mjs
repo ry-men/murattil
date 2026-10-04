@@ -14,7 +14,7 @@ const browser = await chromium.launch({
   executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
   args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${wav}%noloop`, "--autoplay-policy=no-user-gesture-required"],
 });
-const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, permissions: ["microphone"], colorScheme: process.env.DARK ? "dark" : "light" });
+const ctx = await browser.newContext({ acceptDownloads: true, viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, permissions: ["microphone"], colorScheme: process.env.DARK ? "dark" : "light" });
 const page = await ctx.newPage();
 const events = [];
 page.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") events.push(`[${m.type()}] ${m.text()}`); });
@@ -34,6 +34,7 @@ if (mode === "hifz") {
   await page.fill("#in-from", from);
   await page.fill("#in-to", to);
   await page.dispatchEvent("#in-to", "input");
+  if (process.env.SENS) await page.setChecked("#chk-sensitive", process.env.SENS === "1");
   if (show) await page.screenshot({ path: `${shots}/${tag}-1-setup.png` });
   await page.click("#btn-start-hifz");
 } else {
@@ -71,6 +72,15 @@ const live = await page.evaluate(() => {
 if (show) await page.screenshot({ path: `${shots}/${tag}-2b-end.png` });
 await page.click("#btn-stop");
 await page.waitForFunction(() => document.body.dataset.screen === "summary", null, { timeout: 10000 });
-if (show) await page.screenshot({ path: `${shots}/${tag}-4-summary.png` });
-console.log(JSON.stringify({ dur, live, flags, events }, null, 1));
+if (show) await page.screenshot({ path: `${shots}/${tag}-4-summary.png`, fullPage: true });
+const summary = await page.evaluate(() => ({ valid: document.getElementById("sum-valid").textContent, review: document.getElementById("sum-review").textContent, items: [...document.querySelectorAll("#sum-list li")].map((l) => l.textContent) }));
+let downloads = [];
+if (process.env.DIAG) {
+  const dl = [];
+  page.on("download", (d) => dl.push(d));
+  await page.click("#btn-diag");
+  await page.waitForTimeout(2500);
+  for (const d of dl) { const p = `${shots}/${d.suggestedFilename()}`; await d.saveAs(p); downloads.push(p); }
+}
+console.log(JSON.stringify({ dur, live, flags, summary, downloads, events }, null, 1));
 await browser.close();
