@@ -51,7 +51,7 @@ while ((Date.now() - t0) / 1000 < dur + 2) {
   });
   if (sheet) {
     flags.push({ t: ((Date.now() - t0) / 1000).toFixed(1), ...sheet });
-    if (show && flags.length === 1) await page.screenshot({ path: `${shots}/${tag}-3-sheet.png` });
+    if (show && flags.length === 1) await page.waitForTimeout(400), await page.screenshot({ path: `${shots}/${tag}-3-sheet.png` });
     if (process.env.ON_FLAG === "retry" && sheet.phase === "error") await page.click("#sheet-primary");
     else if (sheet.phase === "corrected") await page.click("#sheet-primary");
     else if (sheet.phase === "error") await page.click("#sheet-secondary");
