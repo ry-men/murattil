@@ -1,6 +1,6 @@
 // Service worker : l'app fonctionne hors ligne après la première visite.
-const CACHE = "murattil-v3";
-const CORE = ["./", "./index.html", "./quran.json", "./zipformer_quran.json", "./models/zipformer_a0w_ep1_a05.io.json", "./audio-processor.js", "./manifest.webmanifest", "./icon-192.png"];
+const CACHE = "murattil-v7";
+const CORE = ["./", "./index.html", "./config.json", "./quran.json", "./zipformer_quran.json", "./models/zipformer_a0w_ep1_a05.io.json", "./audio-processor.js", "./manifest.webmanifest", "./icon-192.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).catch(() => undefined).then(() => self.skipWaiting()));
@@ -16,9 +16,9 @@ self.addEventListener("message", (e) => {
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
-  if (req.url.endsWith(".onnx")) return; // le modèle vit dans IndexedDB
+  if (req.url.endsWith(".onnx") || /\.part\d+$/.test(req.url)) return; // les modèles vivent dans IndexedDB
   // Réseau d'abord pour la page (mises à jour), cache d'abord pour le reste.
-  if (req.mode === "navigate") {
+  if (req.mode === "navigate" || req.url.endsWith("/config.json")) {
     e.respondWith(fetch(req).then((r) => { const copy = r.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); return r; }).catch(() => caches.match(req.url, { ignoreVary: true }).then((r) => r || caches.match("./index.html", { ignoreVary: true }))));
     return;
   }

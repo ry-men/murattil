@@ -1,0 +1,33 @@
+name: Exporter muaalem-mini (ONNX pour le téléphone)
+on:
+  push:
+    branches: [main]
+    paths: ["scripts/export_mini.py", ".github/workflows/export-mini.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dépendances
+        run: |
+          pip install -q --extra-index-url https://download.pytorch.org/whl/cpu torch
+          pip install -q "transformers>=4.55" onnx onnxruntime soundfile librosa Levenshtein huggingface_hub quran-transcript quran-muaalem
+      - name: Export
+        run: python scripts/export_mini.py out
+      - name: Publier la release mini-v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view mini-v1 >/dev/null 2>&1 || gh release create mini-v1 --title "Modèle muaalem-mini (ONNX)" --notes "Export automatique de sysofwan/hifzguide-muaalem-mini (AGPL-3.0). Voir report.json."
+          gh release upload mini-v1 out/muaalem_mini.int8.onnx out/muaalem_mini_vocab.json out/report.json out/test_pcm.f32 --clobber
+      - name: Relancer la publication du site
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml || true

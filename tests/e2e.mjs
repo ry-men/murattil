@@ -35,6 +35,7 @@ if (mode === "hifz") {
   await page.fill("#in-to", to);
   await page.dispatchEvent("#in-to", "input");
   if (process.env.SENS) await page.setChecked("#chk-sensitive", process.env.SENS === "1");
+  if (process.env.TAJWID) await page.evaluate(() => document.querySelector("details.adv").open = true), await page.fill("#in-tajwid", process.env.TAJWID);
   if (show) await page.screenshot({ path: `${shots}/${tag}-1-setup.png` });
   await page.click("#btn-start-hifz");
 } else {
@@ -66,15 +67,24 @@ const live = await page.evaluate(() => {
     ayahs: s.ayahs, mistakes: s.mistakes, current: s.current,
     words: words.length, ok: words.filter((w) => w.classList.contains("ok")).length,
     seen: words.filter((w) => w.classList.contains("seen")).length,
+    tj: words.filter((w) => w.classList.contains("tj")).map((w) => w.closest(".ayah").dataset.a + ":" + w.dataset.w),
+    tjBar: document.getElementById("tj-bar").textContent,
     title: document.getElementById("r-title").textContent, sub: document.getElementById("r-sub").textContent,
   };
 });
 if (show) await page.screenshot({ path: `${shots}/${tag}-2b-end.png` });
 await page.click("#btn-stop");
-await page.waitForFunction(() => document.body.dataset.screen === "summary", null, { timeout: 10000 });
+const tStop = Date.now(); await page.waitForFunction(() => document.body.dataset.screen === "summary", null, { timeout: 60000 }); console.log("bilan en", ((Date.now() - tStop) / 1000).toFixed(1), "s");
 if (show) await page.screenshot({ path: `${shots}/${tag}-4-summary.png`, fullPage: true });
 const summary = await page.evaluate(() => ({ valid: document.getElementById("sum-valid").textContent, review: document.getElementById("sum-review").textContent, items: [...document.querySelectorAll("#sum-list li")].map((l) => l.textContent) }));
 let downloads = [];
+let tajwid = null;
+if (process.env.TAJWID) {
+  if (await page.isVisible("#btn-tajwid")) await page.click("#btn-tajwid");
+  await page.waitForFunction(() => document.getElementById("btn-tajwid").hidden || document.getElementById("btn-tajwid").textContent.includes("Réessayer"), null, { timeout: 120000 });
+  tajwid = await page.evaluate(() => ({ info: document.getElementById("tajwid-info").textContent, items: [...document.querySelectorAll("#tajwid-list li")].map((l) => l.textContent) }));
+  if (show) await page.screenshot({ path: `${shots}/${tag}-5-tajwid.png`, fullPage: true });
+}
 if (process.env.DIAG) {
   const dl = [];
   page.on("download", (d) => dl.push(d));
@@ -82,5 +92,5 @@ if (process.env.DIAG) {
   await page.waitForTimeout(2500);
   for (const d of dl) { const p = `${shots}/${d.suggestedFilename()}`; await d.saveAs(p); downloads.push(p); }
 }
-console.log(JSON.stringify({ dur, live, flags, summary, downloads, events }, null, 1));
+console.log(JSON.stringify({ dur, live, flags, summary, tajwid, downloads, events }, null, 1));
 await browser.close();

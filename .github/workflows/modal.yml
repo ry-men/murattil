@@ -1,0 +1,49 @@
+name: Déployer le serveur tajwid sur Modal (GPU)
+on:
+  push:
+    branches: [main]
+    paths: ["server/**", ".github/workflows/modal.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Secrets présents ?
+        id: check
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "Secrets MODAL_TOKEN_ID / MODAL_TOKEN_SECRET absents : déploiement ignoré."; echo "skip=1" >> $GITHUB_OUTPUT
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.skip != '1'
+        with:
+          python-version: "3.12"
+      - name: Déploiement
+        if: steps.check.outputs.skip != '1'
+        run: |
+          pip install -q modal
+          cd server && modal deploy modal_app.py | tee ../deploy.log
+      - name: Adresse du serveur -> config.json (l'app la lit toute seule)
+        if: steps.check.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          URL=$(grep -o 'https://[A-Za-z0-9._-]*--murattil-tajwid-web[A-Za-z0-9._-]*\.modal\.run' deploy.log | head -1)
+          if [ -z "$URL" ]; then echo "Adresse introuvable dans le journal de déploiement"; exit 1; fi
+          echo "Serveur : $URL"
+          for i in 1 2 3 4 5 6; do curl -fsS -m 120 "$URL/health" && break || sleep 20; done
+          printf '{"tajwidUrl": "%s"}\n' "$URL" > public/config.json
+          if git diff --quiet public/config.json; then echo "Adresse inchangée"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/config.json
+          git commit -m "Serveur tajwid : $URL"
+          git pull --rebase -q origin main && git push origin HEAD:main
+          gh workflow run pages.yml

@@ -8,15 +8,17 @@ await page.goto("http://localhost:4173/");
 await page.waitForFunction(() => window.__murattil?.engineState === "absent");
 await page.click("#btn-install");
 await page.waitForFunction(() => window.__murattil.engineState === "ready", null, { timeout: 120000 });
-await page.waitForTimeout(4000); // laisse le SW mettre en cache
+await page.waitForTimeout(20000); // laisse le SW mettre en cache et le 2e modèle se télécharger
 await ctx.setOffline(true);
 await page.reload();
 const t0 = Date.now();
 await page.waitForTimeout(8000);
-console.log(await page.evaluate(async () => ({ st: window.__murattil?.engineState, pill: document.getElementById("engine-pill")?.textContent, detail: document.getElementById("engine-detail")?.textContent, ctrl: !!navigator.serviceWorker.controller, cached: (await (await caches.open("murattil-v2")).keys()).map(r => r.url.replace(location.origin, "")) })));
+console.log(await page.evaluate(async () => ({ st: window.__murattil?.engineState, pill: document.getElementById("engine-pill")?.textContent, detail: document.getElementById("engine-detail")?.textContent, ctrl: !!navigator.serviceWorker.controller, cached: (await (await caches.open("murattil-v6")).keys()).map(r => r.url.replace(location.origin, "")) })));
 await page.waitForFunction(() => window.__murattil?.engineState === "ready", null, { timeout: 60000 });
 console.log(`HORS LIGNE : moteur prêt en ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 await page.click("#go-free");
 await page.waitForFunction(() => document.querySelector("#mic-pill").textContent.includes("actif"), null, { timeout: 20000 });
-console.log("HORS LIGNE : micro actif, séance lancée. Erreurs:", errs);
+const keys = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open("murattil-models", 1); r.onsuccess = () => { const q = r.result.transaction("models").objectStore("models").getAllKeys(); q.onsuccess = () => res(q.result); }; }));
+await page.waitForTimeout(3000);
+console.log("HORS LIGNE : micro actif, séance lancée. Modèles en cache :", keys, "mini :", await page.evaluate(() => window.__murattil.miniState), "Erreurs:", errs);
 await browser.close();

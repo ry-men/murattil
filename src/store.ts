@@ -5,7 +5,7 @@ export interface MissedWord { surah: number; ayah: number; word: number; text: s
 export interface SessionRecord {
   id: string;
   date: string;
-  mode: "libre" | "hifz";
+  mode: "libre" | "hifz" | "test" | "atelier";
   surah: number | null;
   from: number | null;
   to: number | null;
@@ -16,6 +16,7 @@ export interface SessionRecord {
   validated?: number;
   total?: number;
   missed?: MissedWord[];
+  tajwid?: { surah: number; ayah: number; word: number; word_text: string; category: string; message: string }[];
 }
 
 const KEY = "murattil.history.v1";
@@ -33,16 +34,42 @@ export function saveSession(rec: SessionRecord): void {
   } catch { /* stockage indisponible */ }
 }
 
+export function updateSession(id: string, patch: Partial<SessionRecord>): void {
+  try {
+    const all = loadHistory();
+    const i = all.findIndex((r) => r.id === id);
+    if (i >= 0) { all[i] = { ...all[i], ...patch }; localStorage.setItem(KEY, JSON.stringify(all)); }
+  } catch { /* */ }
+}
+
 export function clearHistory(): void {
   try { localStorage.removeItem(KEY); } catch { /* */ }
 }
 
-export interface Prefs { hide: boolean; surah: number; from: number; to: number; fontScale: number; phoneFilters: boolean; sensitive: boolean }
-const DEFAULT_PREFS: Prefs = { hide: true, surah: 67, from: 1, to: 30, fontScale: 1, phoneFilters: false, sensitive: true };
+export interface Prefs { display: "hidden" | "peek" | "visible"; liveTajwid: boolean; memorized: number[]; hide?: boolean; surah: number; from: number; to: number; fontScale: number; phoneFilters: boolean; sensitive: boolean; verify: boolean; tajwidUrl: string; tajwidEngine: "auto" | "mini" | "server" }
+const DEFAULT_PREFS: Prefs = { display: "hidden", liveTajwid: true, memorized: [], surah: 67, from: 1, to: 30, fontScale: 1, phoneFilters: false, sensitive: true, verify: true, tajwidUrl: "", tajwidEngine: "auto" };
 
-export function loadPrefs(): Prefs {
-  try { return { ...DEFAULT_PREFS, ...JSON.parse(localStorage.getItem(PREFS) || "{}") }; } catch { return { ...DEFAULT_PREFS }; }
+// Serveur tajwid par défaut : écrit dans config.json par le workflow de déploiement (rien à coller).
+let defaultServer = "";
+export function setDefaultServer(url: string): void { defaultServer = url.trim().replace(/\/+$/, ""); }
+export function getDefaultServer(): string { return defaultServer; }
+
+function rawPrefs(): Prefs {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PREFS) || "{}");
+    if (raw.display === undefined && raw.hide === false) raw.display = "visible"; // ancienne préférence
+    return { ...DEFAULT_PREFS, ...raw };
+  } catch { return { ...DEFAULT_PREFS }; }
 }
+/** Préférences effectives : sans adresse personnalisée, on prend le serveur par défaut. */
+export function loadPrefs(): Prefs {
+  const p = rawPrefs();
+  return { ...p, tajwidUrl: p.tajwidUrl || defaultServer };
+}
+/** Adresse saisie à la main (vide = serveur automatique). */
+export function customServer(): string { return rawPrefs().tajwidUrl; }
 export function savePrefs(p: Prefs): void {
-  try { localStorage.setItem(PREFS, JSON.stringify(p)); } catch { /* */ }
+  // On ne fige pas le serveur par défaut dans les préférences : il peut changer à un nouveau déploiement.
+  const tajwidUrl = p.tajwidUrl && p.tajwidUrl !== defaultServer ? p.tajwidUrl : "";
+  try { localStorage.setItem(PREFS, JSON.stringify({ ...p, tajwidUrl })); } catch { /* */ }
 }

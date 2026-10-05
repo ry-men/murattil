@@ -22,11 +22,18 @@
     <div class="home-body">
       <div id="engine-card" class="card engine-card" hidden>
         <h2>Installer le moteur de reconnaissance</h2>
-        <p>Téléchargement unique de 75 Mo. Ensuite, tout marche sans internet. Ta voix reste sur ton téléphone.</p>
+        <p>Téléchargement unique d'environ 160 Mo (de préférence en Wi-Fi). Ensuite, tout marche sans internet. Ta voix reste sur ton téléphone.</p>
         <div class="progress" hidden><div class="bar"></div></div>
         <p class="muted" id="engine-detail"></p>
         <button id="btn-install" class="btn primary">Télécharger maintenant</button>
       </div>
+
+      <p id="streak" class="streak muted"></p>
+
+      <section id="due-card" class="card due-card">
+        <div class="due-head"><h2>Révision du jour</h2><button class="link" data-nav="memo">Ma mémorisation</button></div>
+        <ul id="due-list" class="due-list"></ul>
+      </section>
 
       <button class="card mode-card" id="go-hifz">
         <span class="mode-icon" aria-hidden="true">
@@ -40,6 +47,23 @@
         </span>
         <span class="mode-text"><strong>Récitation libre</strong><span>Récite n'importe où dans le Coran. L'app retrouve la sourate et suit chaque mot.</span></span>
       </button>
+
+      <button class="card mode-card" id="go-test">
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M9 9a3 3 0 1 1 4.2 2.7c-.8.4-1.2 1-1.2 1.8V15M12 18.5v.01" /><circle cx="12" cy="12" r="9" /></svg>
+        </span>
+        <span class="mode-text"><strong>Test de mémoire</strong><span>Un début de verset tiré au hasard dans tes sourates : retrouve-le et continue.</span></span>
+      </button>
+      <button class="card mode-card" id="go-atelier">
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M4 18c3-6 5-9 8-9s5 3 8 9M8 6h8M12 3v3" /></svg>
+        </span>
+        <span class="mode-text"><strong>Atelier tajwid</strong><span>Ayah par ayah, en murattal. Analyse fine de chaque lettre (makharij, sifat, madd, ghunna) et réécoute de ta récitation.</span></span>
+      </button>
+      <div class="row2">
+        <button class="btn big" data-nav="weak">Points faibles</button>
+        <button class="btn big" data-nav="memo">Ma mémorisation</button>
+      </div>
 
       <div class="history-head"><h3>Dernières séances</h3><button id="btn-clear" class="link">Effacer</button></div>
       <ul id="history" class="history"></ul>
@@ -62,9 +86,29 @@
         <label class="field"><span>De l'ayah</span><input id="in-from" type="number" inputmode="numeric" min="1" /></label>
         <label class="field"><span>À l'ayah</span><input id="in-to" type="number" inputmode="numeric" min="1" /></label>
       </div>
-      <label class="toggle"><input type="checkbox" id="chk-hide" /><span>Cacher le texte (il se dévoile quand tu récites)</span></label>
+      <label class="field"><span>Affichage du texte</span>
+        <select id="sel-display">
+          <option value="hidden">Caché (se dévoile quand tu récites)</option>
+          <option value="peek">Premières lettres seulement</option>
+          <option value="visible">Visible</option>
+        </select>
+      </label>
+      <label class="field"><span>Moteur du tajwid</span>
+        <select id="sel-tj-engine">
+          <option value="auto">Automatique (téléphone si le modèle est disponible)</option>
+          <option value="mini">Sur le téléphone (muaalem-mini, hors ligne)</option>
+          <option value="server">Serveur (Muaalem complet, en ligne)</option>
+        </select>
+      </label>
+      <label class="toggle"><input type="checkbox" id="chk-live-tajwid" /><span>Tajwid en direct quand tu es en ligne (analyse de chaque ayah par le serveur)</span></label>
+      <label class="toggle"><input type="checkbox" id="chk-verify" /><span>Double vérification des mots par un 2e modèle (recommandé, +88 Mo téléchargés une fois)</span></label>
       <label class="toggle"><input type="checkbox" id="chk-sensitive" /><span>Détection sensible des erreurs (plus d'erreurs repérées, parfois une fausse alerte)</span></label>
       <label class="toggle"><input type="checkbox" id="chk-filters" /><span>Filtre anti-bruit du téléphone (seulement si tu es dans un endroit bruyant)</span></label>
+      <details class="adv"><summary>Avancé</summary>
+        <label class="field"><span>Autre serveur tajwid (laisser vide : automatique)</span>
+          <input id="in-tajwid" type="url" inputmode="url" placeholder="Automatique (serveur Murattil)" autocomplete="off" />
+        </label>
+      </details>
       <div class="quick">
         <span class="muted">Raccourcis :</span>
         <button class="chip" data-quick="1">Al-Fatiha</button>
@@ -88,6 +132,7 @@
       </div>
       <span id="mic-pill" class="pill">Micro</span>
     </header>
+    <div id="tj-bar" class="tj-bar" hidden></div>
     <div id="r-scroll" class="r-scroll">
       <div id="r-wait" class="r-wait">
         <div class="pulse"><span></span></div>
@@ -124,10 +169,117 @@
       <p id="sum-range" class="muted center"></p>
       <h3 id="sum-mistakes-title">Mots à revoir</h3>
       <ul id="sum-list" class="mistakes"></ul>
+      <section id="tajwid-box" class="card tajwid-box">
+        <h3>Analyse fine : lettres, harakat, tajwid</h3>
+        <p id="tajwid-info" class="muted"></p>
+        <button id="btn-tajwid" class="btn primary">Lancer l'analyse tajwid</button>
+        <ul id="tajwid-list" class="mistakes"></ul>
+      </section>
       <div class="sum-actions">
+        <button id="btn-next-q" class="btn primary big" hidden>Question suivante</button>
         <button id="btn-again" class="btn primary big">Recommencer ce passage</button>
         <button class="btn ghost big" data-nav="home">Accueil</button>
         <button id="btn-diag" class="link">Envoyer l'enregistrement à Claude (diagnostic)</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- MA MÉMORISATION -->
+  <section id="s-memo" class="screen">
+    <header class="top">
+      <button class="icon-btn" data-nav="home" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+      <h1 class="top-title">Ma mémorisation</h1>
+      <span></span>
+    </header>
+    <div class="setup-body">
+      <p class="muted">Coche les sourates que tu connais. L'app planifie leur révision (répétition espacée) et s'en sert pour les tests.</p>
+      <div class="quick">
+        <button class="chip" data-juz="30">Juz 'Amma</button>
+        <button class="chip" data-juz="29">Juz Tabarak</button>
+        <button class="chip" data-juz="none">Tout décocher</button>
+      </div>
+      <ul id="memo-list" class="memo-list"></ul>
+    </div>
+  </section>
+
+  <!-- POINTS FAIBLES -->
+  <section id="s-weak" class="screen">
+    <header class="top">
+      <button class="icon-btn" data-nav="home" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+      <h1 class="top-title">Points faibles</h1>
+      <span></span>
+    </header>
+    <div class="setup-body">
+      <p id="weak-intro" class="muted"></p>
+      <h3>Ayahs les plus fragiles</h3>
+      <ul id="weak-ayahs" class="due-list"></ul>
+      <h3>Règles de tajwid à travailler</h3>
+      <ul id="weak-rules" class="mistakes"></ul>
+      <h3>Mots qui reviennent</h3>
+      <ul id="weak-words" class="mistakes"></ul>
+    </div>
+  </section>
+
+  <!-- TEST DE MÉMOIRE -->
+  <section id="s-test" class="screen">
+    <header class="top">
+      <button class="icon-btn" data-nav="home" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+      <h1 class="top-title">Test de mémoire</h1>
+      <span></span>
+    </header>
+    <div class="setup-body">
+      <p class="muted">L'app tire une ayah au hasard et te montre ses premiers mots. Retrouve la suite et récite de mémoire.</p>
+      <label class="field"><span>Sur quelles sourates ?</span>
+        <select id="test-scope"></select>
+      </label>
+      <div class="row2">
+        <label class="field"><span>Questions</span>
+          <select id="test-count"><option>3</option><option selected>5</option><option>10</option></select>
+        </label>
+        <label class="field"><span>Ayahs par question</span>
+          <select id="test-len"><option>1</option><option selected>2</option><option>3</option></select>
+        </label>
+      </div>
+      <button id="btn-start-test" class="btn primary big">Commencer le test</button>
+    </div>
+  </section>
+
+  <!-- ATELIER TAJWID : CHOIX -->
+  <section id="s-atelier-setup" class="screen">
+    <header class="top">
+      <button class="icon-btn" data-nav="home" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+      <h1 class="top-title">Atelier tajwid</h1>
+      <span></span>
+    </header>
+    <div class="setup-body">
+      <p class="muted">Récite lentement, en murattal, une ayah à la fois. Le texte reste visible. Après chaque ayah, tu vois chaque faute de lettre, de haraka, de madd et de sifat, et tu peux te réécouter.</p>
+      <label class="field"><span>Sourate</span><select id="at-surah"></select></label>
+      <label class="field"><span>Commencer à l'ayah</span><input id="at-ayah" type="number" inputmode="numeric" min="1" value="1" /></label>
+      <p id="at-engine" class="muted"></p>
+      <button id="btn-start-atelier" class="btn primary big">Commencer</button>
+    </div>
+  </section>
+
+  <!-- ATELIER TAJWID : RÉSULTAT D'UNE AYAH -->
+  <section id="s-atelier" class="screen">
+    <header class="top">
+      <button class="icon-btn" id="at-quit" aria-label="Terminer"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+      <h1 id="at-title" class="top-title">Atelier tajwid</h1>
+      <span id="at-score" class="pill"></span>
+    </header>
+    <div class="summary-body">
+      <p id="at-verse" class="mushaf at-verse" dir="rtl" lang="ar"></p>
+      <p id="at-status" class="muted center"></p>
+      <ul id="at-list" class="mistakes"></ul>
+      <div class="at-audio">
+        <span class="muted">Ta récitation</span>
+        <audio id="at-mine" controls preload="auto"></audio>
+        <span class="muted">Récitateur (en ligne)</span>
+        <audio id="at-qari" controls preload="none"></audio>
+      </div>
+      <div class="sum-actions">
+        <button id="at-next" class="btn primary big">Ayah suivante</button>
+        <button id="at-retry" class="btn ghost big">Recommencer cette ayah</button>
       </div>
     </div>
   </section>

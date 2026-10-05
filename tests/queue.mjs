@@ -1,0 +1,30 @@
+// File d'attente hors ligne : serveur tajwid absent pendant la séance, puis disponible.
+import { chromium } from "playwright";
+import { spawn } from "node:child_process";
+const wav = "tests/audio/multi_067_001_004.wav";
+const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome", args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${wav}%noloop`] });
+const page = await (await browser.newContext({ permissions: ["microphone"] })).newPage();
+await page.goto("http://localhost:4173/");
+await page.waitForFunction(() => window.__murattil?.engineState && window.__murattil.engineState !== "unknown");
+if (await page.evaluate(() => window.__murattil.engineState) === "absent") await page.click("#btn-install");
+await page.waitForFunction(() => window.__murattil.engineState === "ready", null, { timeout: 120000 });
+await page.click("#go-hifz");
+await page.selectOption("#sel-surah", "67"); await page.fill("#in-from", "1"); await page.fill("#in-to", "4"); await page.dispatchEvent("#in-to", "input");
+await page.evaluate(() => document.querySelector("details.adv").open = true), await page.fill("#in-tajwid", "http://localhost:7861");
+await page.click("#btn-start-hifz");
+await page.waitForTimeout(70000);
+console.log("barre pendant la séance :", await page.textContent("#tj-bar"));
+await page.click("#btn-stop");
+await page.waitForFunction(() => document.body.dataset.screen === "summary", null, { timeout: 60000 });
+await page.waitForTimeout(1500);
+console.log("bilan (hors ligne) :", await page.textContent("#tajwid-info"));
+// Le serveur revient
+const srv = spawn("/home/claude/muaalem/venv/bin/uvicorn", ["--app-dir", "tests", "mock_tajwid:app", "--port", "7861"], { stdio: "ignore" });
+await new Promise((r) => setTimeout(r, 4000));
+await page.evaluate(() => window.dispatchEvent(new Event("online")));
+await page.waitForTimeout(8000);
+console.log("bilan (en ligne) :", await page.textContent("#tajwid-info"));
+const hist = await page.evaluate(() => JSON.parse(localStorage.getItem("murattil.history.v1"))[0]);
+console.log("historique : tajwid =", hist.tajwid?.length, "points");
+srv.kill();
+await browser.close();

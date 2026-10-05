@@ -59,7 +59,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 body[data-screen="home"] #s-home,
 body[data-screen="setup"] #s-setup,
 body[data-screen="recite"] #s-recite,
-body[data-screen="summary"] #s-summary { display: flex; }
+body[data-screen="summary"] #s-summary,
+body[data-screen="memo"] #s-memo,
+body[data-screen="weak"] #s-weak,
+body[data-screen="test"] #s-test,
+body[data-screen="atelier-setup"] #s-atelier-setup,
+body[data-screen="atelier"] #s-atelier { display: flex; }
 
 /* Barre du haut */
 .top {
@@ -209,3 +214,62 @@ body[data-screen="summary"] #s-summary { display: flex; }
 .toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 96px); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 50; max-width: calc(100% - 32px); }
 
 @media (min-width: 600px) { :root { --q-size: 34px; } }
+
+.tajwid-box h3 { margin: 0 0 6px; font-size: 15px; }
+.tajwid-box p { margin: 0 0 10px; font-size: 14px; }
+.tajwid-box .mistakes { margin-top: 10px; }
+.t-msg { color: var(--ink); font-weight: 500; text-align: right; }
+
+/* Accueil : régularité et révision du jour */
+.streak { margin: -4px 2px 0; font-size: 14px; }
+.due-card { padding: 14px 16px; }
+.due-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; }
+.due-head h2 { margin: 0; font-size: 16px; }
+.due-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.due-list li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.due-list li:first-child { border-top: 0; }
+.due-list li div { display: flex; flex-direction: column; min-width: 0; }
+.due-list li .muted { font-size: 13px; }
+.due-list li.empty { display: block; color: var(--muted); font-size: 14px; border: 0; }
+.due-list .btn { padding: 8px 14px; flex: none; }
+.badge { font-size: 11.5px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--hidden); color: var(--muted); }
+.badge.fort { background: var(--ok-bg); color: var(--ok); }
+.badge.moyen { background: var(--warn-bg); color: var(--warn); }
+.badge.fragile { background: var(--bad-bg); color: var(--bad); }
+
+/* Ma mémorisation */
+.memo-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.memo-list li { display: flex; align-items: center; gap: 10px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+.memo-list input { width: 22px; height: 22px; accent-color: var(--brand); flex: none; }
+.memo-list .m-name { flex: 1; min-width: 0; }
+.memo-list .m-name strong { display: block; font-size: 15px; }
+.memo-list .m-name span { font-size: 12.5px; color: var(--muted); }
+.memo-list .m-ar { font-family: "Amiri Quran", serif; font-size: 20px; }
+.juz-head { font-size: 13px; font-weight: 700; color: var(--accent); padding: 14px 2px 4px; border-bottom: 1px solid var(--line); }
+
+/* Tajwid en direct */
+.tj-bar { font-size: 13px; padding: 6px 16px; background: var(--paper); border-bottom: 1px solid var(--line); color: var(--muted); }
+.tj-bar.on { color: var(--ok); }
+.tj-bar.wait { color: var(--warn); }
+.w.tj { text-decoration-line: underline; text-decoration-style: wavy; text-decoration-thickness: 1.5px; text-underline-offset: 10px; cursor: pointer; }
+.w.tj-harf, .w.tj-mot { text-decoration-color: var(--bad); }
+.w.tj-haraka { text-decoration-color: var(--warn); }
+.w.tj-tajwid { text-decoration-color: #3b6fd6; }
+
+/* Mode « premières lettres » */
+.peek-text .w:not(.ok):not(.hint):not(.miss):not(.bad):not(.err) .wr {
+  color: transparent; background: linear-gradient(transparent 30%, var(--hidden) 30%, var(--hidden) 74%, transparent 74%);
+}
+.peek-text .w.cur:not(.ok) .wr { background: linear-gradient(transparent 30%, var(--cur) 30%, var(--cur) 70%, var(--accent) 70%, var(--accent) 74%, transparent 74%); }
+.setup-body h3 { margin: 10px 0 0; font-size: 15px; }
+
+/* Atelier tajwid */
+.at-verse { font-size: calc(var(--q-size) * 1.1); text-align: center; text-align-last: center; margin: 4px 0; }
+.at-verse .w { padding: 0 2px; }
+.at-audio { display: flex; flex-direction: column; gap: 6px; }
+.at-audio audio { width: 100%; }
+body.atelier .r-scroll .mushaf { font-size: calc(var(--q-size) * 1.15); }
+.w.tj-sifa { text-decoration-color: #8a4fd6; }
+
+details.adv { margin-top: 4px; }
+details.adv > summary { cursor: pointer; color: var(--muted, #777); font-size: 0.9rem; padding: 6px 0; }

@@ -82,3 +82,30 @@ export async function loadModel(
   }
   throw lastErr;
 }
+
+/** Modèle découpé en morceaux (limite de taille par fichier des hébergeurs) : on recolle, puis cache. */
+export async function loadModelParts(
+  urls: string[],
+  key: string,
+  totalBytes: number,
+  onProgress: (loaded: number, total: number) => void,
+): Promise<ArrayBuffer> {
+  const cached = await get(key);
+  if (cached) { onProgress(1, 1); return cached; }
+  const parts: ArrayBuffer[] = [];
+  let done = 0;
+  for (const u of urls) {
+    let lastErr: unknown = null, buf: ArrayBuffer | null = null;
+    for (let attempt = 0; attempt < 4 && !buf; attempt++) {
+      try { buf = await download(u, (l) => onProgress(done + l, totalBytes)); }
+      catch (e) { lastErr = e; await new Promise((r) => setTimeout(r, 1500 * (attempt + 1))); }
+    }
+    if (!buf) throw lastErr;
+    parts.push(buf); done += buf.byteLength;
+  }
+  const out = new Uint8Array(done);
+  let off = 0;
+  for (const p of parts) { out.set(new Uint8Array(p), off); off += p.byteLength; }
+  await put(key, out.buffer);
+  return out.buffer;
+}

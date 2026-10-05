@@ -5,3 +5,5 @@ public/zipformer_quran.json
 public/quran.json
 tests/shots
 tests/audio
+__pycache__
+public/models/muaalem_mini*

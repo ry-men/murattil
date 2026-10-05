@@ -40,7 +40,12 @@ function postVerdicts(force = false) {
   post({ type: "verdicts", data: out });
 }
 
-const post = (msg: unknown) => (self as unknown as Worker).postMessage(msg);
+// Position audio (en secondes) réellement traitée par le moteur : sert à découper l'audio par ayah.
+let fed = 0;
+const post = (msg: unknown) => {
+  if (msg && typeof msg === "object" && !(msg as { at?: number }).at) (msg as { at?: number }).at = fed / 16000;
+  (self as unknown as Worker).postMessage(msg);
+};
 
 async function fetchJson<T>(url: string): Promise<T> {
   let lastErr: unknown;
@@ -95,13 +100,14 @@ async function handle(msg: ToWorker): Promise<void> {
     case "init":
       return init(msg.base);
     case "audio":
-      if (session) { for (const m of await session.feed(msg.samples)) post(m); postVerdicts(); }
+      if (session) { fed += msg.samples.length; for (const m of await session.feed(msg.samples)) post(m); postVerdicts(); }
       return;
     case "stop":
       if (session) { postVerdicts(true); for (const m of await session.stop()) post(m); postVerdicts(true); }
       post({ type: "stopped" });
       return;
     case "reset":
+      fed = 0;
       session?.reset();
       return;
     case "set_mode":
