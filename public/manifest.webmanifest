@@ -8,7 +8,96 @@
   "theme_color": "#0f3d33",
   "lang": "fr",
   "icons": [
-    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "id": "./",
+  "description": "Récitation et mémorisation du Coran : suivi mot à mot, hifz, révision et tajwid. Marche sans internet.",
+  "display_override": [
+    "standalone",
+    "minimal-ui"
+  ],
+  "orientation": "portrait",
+  "categories": [
+    "education",
+    "books"
+  ],
+  "shortcuts": [
+    {
+      "name": "Hifz · Révision",
+      "short_name": "Hifz",
+      "url": "./?go=hifz",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Récitation libre",
+      "short_name": "Libre",
+      "url": "./?go=libre",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Test de mémoire",
+      "short_name": "Test",
+      "url": "./?go=test",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Atelier tajwid",
+      "short_name": "Atelier",
+      "url": "./?go=atelier",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "screenshot-home.jpg",
+      "sizes": "824x1830",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Accueil : hifz, récitation libre, test, atelier tajwid"
+    },
+    {
+      "src": "screenshot-hifz.jpg",
+      "sizes": "824x1830",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Choix du passage et réglages du tajwid"
+    }
   ]
 }

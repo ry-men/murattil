@@ -4,7 +4,9 @@ import type { CorrectionAction, CorrectionState, CorrectionIssue } from "./core/
 import { Mic, type MicStatus } from "./audio";
 import { isModelCached } from "./model-cache";
 import { loadQuran, getSurah, ayahWords, hasBismillahPrefix, arNum, type Surah } from "./quran";
-import { loadHistory, saveSession, updateSession, clearHistory, loadPrefs, savePrefs, setDefaultServer, getDefaultServer, customServer, type Mistake, type SessionRecord, type MissedWord } from "./store";
+import { loadTajweedColors, tajweedReady, colorize, legend } from "./tajweed-colors";
+import { initInstall, watchUpdates, shortcutTarget } from "./pwa";
+import { loadHistory, saveSession, updateSession, clearHistory, loadPrefs, savePrefs, setDefaultServer, getDefaultServer, customServer, type Mistake, type SessionRecord, type MissedWord, type Severity } from "./store";
 import { exportDiagnostic } from "./diagnostic";
 import { buildSegments, analyzeSession, checkServer, segmentForAyah, analyzeOne, wav, type TajwidError } from "./tajwid";
 import { enqueue, pending as pendingSegments, remove as removeSegment, countFor } from "./queue";
@@ -248,6 +250,7 @@ async function startSession(mode: "libre" | "hifz", surah: number | null, from =
     verdicts: new Map(), audio: [], audioLen: 0, log: [], ayahAt: new Map(), heard: new Map(), verifyAsked: new Set(),
     tjErrors: new Map(), tjAnalyzed: new Set(), tjAsked: new Set(), tjPending: [], cue: opts.cue ?? 0, recId: "",
   });
+  verifyDone.clear();
   const prefs = loadPrefs();
   session.display = mode === "hifz" && !opts.atelier ? (opts.cue ? "hidden" : prefs.display) : "visible";
   if (!opts.atelier) session.atelier = null;
@@ -264,6 +267,10 @@ async function startSession(mode: "libre" | "hifz", surah: number | null, from =
   $("btn-toggle-hide").hidden = !(mode === "hifz" && session.hide);
   $("r-candidate").textContent = "";
   $("r-timer").textContent = "0:00";
+  if (prefs.tajweedColors) {
+    await loadTajweedColors(BASE);
+    if (!tajweedReady()) toast("Couleurs du tajwid pas encore disponibles (données en cours de publication).", 4000);
+  }
   if (mode === "hifz" && surah) {
     renderPassage(surah, from, to);
     const s = getSurah(surah);
@@ -429,6 +436,7 @@ function renderPassage(surah: number, from: number, to: number) {
   }
   const body = document.createElement("p");
   body.className = "verses";
+  const colors = loadPrefs().tajweedColors && tajweedReady();
   for (let a = from; a <= to; a++) {
     const v = s.verses[a - 1];
     if (!v) continue;
@@ -443,8 +451,10 @@ function renderPassage(surah: number, from: number, to: number) {
       // Première lettre (avec ses voyelles) séparée : sert au mode « premières lettres ».
       const m = w.match(/^(\u06DE\s)?.[\u064B-\u065F\u0670\u06D6-\u06ED]*/u);
       const first = m ? m[0] : w.slice(0, 1);
-      const a1 = document.createElement("span"); a1.className = "w1"; a1.textContent = first;
-      const a2 = document.createElement("span"); a2.className = "wr"; a2.textContent = w.slice(first.length);
+      const a1 = document.createElement("span"); a1.className = "w1";
+      const a2 = document.createElement("span"); a2.className = "wr";
+      if (colors) { a1.append(...colorize(surah, a, i, first, 0)); a2.append(...colorize(surah, a, i, w.slice(first.length), first.length)); }
+      else { a1.textContent = first; a2.textContent = w.slice(first.length); }
       ws.append(a1, a2);
       span.append(ws, " ");
     });
@@ -557,15 +567,16 @@ function sliceAudio(t0: number, t1: number): Float32Array {
 }
 
 /** Réécoute une ayah avec le 2e modèle si des mots n'ont pas été validés. */
-function scheduleVerify(surah: number, ayah: number, endAt?: number): Promise<void> {
+function scheduleVerify(surah: number, ayah: number, endAt?: number, force = false): Promise<void> {
   if (!verifier) return Promise.resolve();
   const key = `${surah}:${ayah}`;
   const start = session.ayahAt.get(key);
-  if (start === undefined || session.verifyAsked.has(key)) return Promise.resolve();
+  if (start === undefined) return Promise.resolve();
+  if (session.verifyAsked.has(key)) return verifyDone.get(key) ?? Promise.resolve();
   const verses = getSurah(surah).verses;
   const words = ayahWords(verses[ayah - 1]).words;
   const notOk = words.map((_, i) => i).filter((i) => { const st = wordState(surah, ayah, i); return st !== 0 && st !== 1; });
-  if (!notOk.length) return Promise.resolve();
+  if (!notOk.length && !force) return Promise.resolve();
   // On fait vérifier tous les mots : le moteur principal peut encore réviser son avis plus tard.
   const targets = words.map((_, i) => i);
   const prevAt = session.ayahAt.get(`${surah}:${ayah - 1}`);
@@ -575,7 +586,7 @@ function scheduleVerify(surah: number, ayah: number, endAt?: number): Promise<vo
   // On attend d'avoir l'audio du début de l'ayah suivante (sert de repère d'alignement).
   if (endAt === undefined && session.active && t1 * 16000 > session.audioLen) {
     const wait = (t1 * 16000 - session.audioLen) / 16 + 100;
-    return new Promise((r) => setTimeout(() => void scheduleVerify(surah, ayah).then(r), wait));
+    return new Promise((r) => setTimeout(() => void scheduleVerify(surah, ayah, undefined, force).then(r), wait));
   }
   t1 = Math.min(t1, t0 + 28);
   session.verifyAsked.add(key);
@@ -584,10 +595,31 @@ function scheduleVerify(surah: number, ayah: number, endAt?: number): Promise<vo
   const before = ayah > 1 ? ayahWords(verses[ayah - 2]).words : [];
   const after = ayah < verses.length ? ayahWords(verses[ayah]).words.slice(0, 3) : [];
   const id = ++verifyId;
-  return new Promise<void>((resolve) => {
+  const p = new Promise<void>((resolve) => {
     verifyJobs.set(id, { surah, ayah, resolve });
     verifier!.postMessage({ type: "job", id, samples, before, words, after, targets }, [samples.buffer]);
   });
+  verifyDone.set(key, p);
+  return p;
+}
+
+const verifyDone = new Map<string, Promise<void>>();
+
+/** Le modèle mini se trompe trop souvent seul (testé sur des récitateurs professionnels : ~1 fausse faute
+ *  par ayah). On ne garde que les fautes de lettres / mots oubliés que le 2e modèle (FastConformer)
+ *  confirme : il doit lui aussi entendre ce mot autrement (ou pas du tout). Harakat et madd du mini : ignorés. */
+async function corroborate(surah: number, ayah: number, errors: TajwidError[], endAt?: number): Promise<TajwidError[]> {
+  const hard = errors.filter((e) => e.category === "harf" || e.category === "mot");
+  if (!hard.length || !verifier) return [];
+  let ok = false;
+  await Promise.race([scheduleVerify(surah, ayah, endAt, true).then(() => { ok = true; }), new Promise((r) => setTimeout(r, 15000))]);
+  if (!ok || !session.verifyAsked.has(`${surah}:${ayah}`)) return [];
+  const kept = hard.filter((e) => { const h = session.heard.get(`${surah}:${ayah}:${e.word}`); return !h || !h.exact; });
+  // Plusieurs écarts sur un même mot : un seul point à revoir (moins de bruit, même information).
+  const byWord = new Map<number, TajwidError[]>();
+  for (const e of kept) byWord.set(e.word, [...(byWord.get(e.word) ?? []), e]);
+  return [...byWord.values()].map((l) => l.length === 1 || l.some((e) => e.category === "mot") ? l.find((e) => e.category === "mot") ?? l[0]
+    : { ...l[0], message: `Mot à revoir : ${l.map((e) => e.message).join(" ; ")}` });
 }
 
 /** État d'un mot : 0 ok, 1 incertain, 2 faux, 3 sauté, 4 en attente, -1 inconnu. */
@@ -902,7 +934,7 @@ function renderTajwidBox(r: SessionRecord) {
     btn.hidden = true;
   });
   if (r.tajwid) {
-    info.textContent = r.tajwid.length ? `${r.tajwid.length} point${r.tajwid.length > 1 ? "s" : ""} à revoir (modèle Quran Muaalem).` : "Aucune erreur de lettre, de haraka ou de tajwid détectée.";
+    info.textContent = r.tajwid.length ? `${r.tajwid.length} point${r.tajwid.length > 1 ? "s" : ""} à revoir.` : "Aucune erreur détectée.";
     btn.hidden = true;
     return;
   }
@@ -981,7 +1013,9 @@ function fillSetup() {
 
 function openSetup(surah?: number, from?: number, to?: number) {
   const p = loadPrefs();
-  if (p.tajwidUrl && p.liveTajwid && navigator.onLine) void checkServer(p.tajwidUrl, 45000); // réveil du serveur
+  // Réveil du serveur seulement s'il servira en direct (un réveil = GPU allumé quelques minutes, payant).
+  const liveServer = p.tajwidEngine === "server" || (p.tajwidEngine === "auto" && miniState !== "ready");
+  if (p.tajwidUrl && p.liveTajwid && liveServer && navigator.onLine) void checkServer(p.tajwidUrl, 45000);
   const s = surah ?? p.surah;
   const max = getSurah(s).verses.length;
   $<HTMLSelectElement>("sel-surah").value = String(s);
@@ -990,9 +1024,12 @@ function openSetup(surah?: number, from?: number, to?: number) {
   $<HTMLSelectElement>("sel-display").value = p.display;
   $<HTMLInputElement>("chk-live-tajwid").checked = p.liveTajwid;
   $<HTMLSelectElement>("sel-tj-engine").value = p.tajwidEngine;
+  $<HTMLSelectElement>("sel-tj-severity").value = p.tjSeverity;
   $<HTMLInputElement>("chk-filters").checked = p.phoneFilters;
   $<HTMLInputElement>("chk-sensitive").checked = p.sensitive;
   $<HTMLInputElement>("chk-verify").checked = p.verify;
+  $<HTMLInputElement>("chk-tj-colors").checked = p.tajweedColors;
+  if (!$("tjc-legend").querySelector(".tjc-legend")) $("tjc-legend").append(legend());
   $<HTMLInputElement>("in-tajwid").value = customServer();
   $<HTMLInputElement>("in-tajwid").placeholder = getDefaultServer() ? "Automatique (serveur Murattil)" : "https://…modal.run";
   updateSetup();
@@ -1005,7 +1042,7 @@ function readSetup() {
   let from = Math.max(1, Math.min(max, Number($<HTMLInputElement>("in-from").value) || 1));
   let to = Math.max(1, Math.min(max, Number($<HTMLInputElement>("in-to").value) || max));
   if (to < from) [from, to] = [to, from];
-  return { surah, from, to, max, display: $<HTMLSelectElement>("sel-display").value as "hidden" | "peek" | "visible", liveTajwid: $<HTMLInputElement>("chk-live-tajwid").checked, tajwidEngine: $<HTMLSelectElement>("sel-tj-engine").value as "auto" | "mini" | "server", phoneFilters: $<HTMLInputElement>("chk-filters").checked, sensitive: $<HTMLInputElement>("chk-sensitive").checked, verify: $<HTMLInputElement>("chk-verify").checked, tajwidUrl: $<HTMLInputElement>("in-tajwid").value.trim() };
+  return { surah, from, to, max, display: $<HTMLSelectElement>("sel-display").value as "hidden" | "peek" | "visible", liveTajwid: $<HTMLInputElement>("chk-live-tajwid").checked, tajwidEngine: $<HTMLSelectElement>("sel-tj-engine").value as "auto" | "mini" | "server", phoneFilters: $<HTMLInputElement>("chk-filters").checked, sensitive: $<HTMLInputElement>("chk-sensitive").checked, verify: $<HTMLInputElement>("chk-verify").checked, tajwidUrl: $<HTMLInputElement>("in-tajwid").value.trim(), tajweedColors: $<HTMLInputElement>("chk-tj-colors").checked, tjSeverity: $<HTMLSelectElement>("sel-tj-severity").value as Severity };
 }
 
 function updateSetup() {
@@ -1083,7 +1120,7 @@ function park(surah: number, ayah: number, blob: Blob) {
 }
 
 function sendTajwid(surah: number, ayah: number, blob: Blob): Promise<void> {
-  if (session.tjEngine === "mini") return sendMini(surah, ayah, blob).then((r) => { if (r) applyTajwid(r.analyzed, r.errors); });
+  if (session.tjEngine === "mini") return sendMini(surah, ayah, blob).then(async (r) => { if (r) applyTajwid(r.analyzed, await corroborate(surah, ayah, r.errors)); });
   const url = loadPrefs().tajwidUrl;
   const job = tjChain.then(async () => {
     if (session.tjLive === "checking") await tjCheck;
@@ -1268,7 +1305,12 @@ async function showAtelierResult(rec: SessionRecord) {
   const words = ayahWords(s.verses[at.ayah - 1]).words;
   $("at-title").textContent = `${s.tr} · ayah ${at.ayah}`;
   const verse = $("at-verse");
-  verse.replaceChildren(...words.flatMap((w, i) => { const sp = document.createElement("span"); sp.className = "w"; sp.dataset.w = String(i); sp.textContent = w; return [sp, document.createTextNode(" ")]; }));
+  const colors = loadPrefs().tajweedColors && tajweedReady();
+  verse.replaceChildren(...words.flatMap((w, i) => {
+    const sp = document.createElement("span"); sp.className = "w"; sp.dataset.w = String(i);
+    if (colors) sp.append(...colorize(at.surah, at.ayah, i, w)); else sp.textContent = w;
+    return [sp, document.createTextNode(" ")];
+  }));
   $("at-list").replaceChildren();
   $("at-score").textContent = "";
   $("at-status").textContent = "Analyse en cours…";
@@ -1296,7 +1338,11 @@ async function showAtelierResult(rec: SessionRecord) {
   }
   if (!errors && miniState === "ready") {
     const r = await sendMini(at.surah, at.ayah, blob);
-    if (r) { errors = r.errors; engine = `muaalem-mini (téléphone, ${((r.ms ?? 0) / 1000).toFixed(1)} s)`; covered = r.analyzed.length > 0; }
+    if (r) {
+      errors = await corroborate(at.surah, at.ayah, r.errors, session.audioLen / 16000);
+      engine = `muaalem-mini (téléphone, ${((r.ms ?? 0) / 1000).toFixed(1)} s ; lettres seulement, confirmées par un 2e modèle)`;
+      covered = r.analyzed.length > 0;
+    }
   }
   if (!errors) {
     await enqueue({ sessionId: rec.id, surah: at.surah, from: at.ayah, to: at.ayah, wav: blob, createdAt: Date.now() });
@@ -1535,6 +1581,7 @@ function renderWeak() {
 function registerSW() {
   if (!("serviceWorker" in navigator) || location.protocol === "http:" && location.hostname !== "localhost") return;
   navigator.serviceWorker.register(new URL("sw.js", BASE)).then(async (reg) => {
+    watchUpdates(reg, () => session.active);
     await navigator.serviceWorker.ready;
     const urls = performance.getEntriesByType("resource").map((e) => e.name).filter((u) => u.startsWith(location.origin) && !u.endsWith(".onnx"));
     urls.push(location.href.split("#")[0]);
@@ -1614,8 +1661,8 @@ async function boot() {
     updateSetup();
   }));
   $("btn-start-hifz").addEventListener("click", () => {
-    const { surah, from, to, display, liveTajwid, tajwidEngine, phoneFilters, sensitive, verify, tajwidUrl } = readSetup();
-    savePrefs({ ...loadPrefs(), surah, from, to, display, liveTajwid, tajwidEngine, phoneFilters, sensitive, verify, tajwidUrl });
+    const { surah, from, to, display, liveTajwid, tajwidEngine, phoneFilters, sensitive, verify, tajwidUrl, tajweedColors, tjSeverity } = readSetup();
+    savePrefs({ ...loadPrefs(), surah, from, to, display, liveTajwid, tajwidEngine, phoneFilters, sensitive, verify, tajwidUrl, tajweedColors, tjSeverity });
     if (tajwidEngine !== "server") startMini();
     if (verify) startVerifier();
     session.test = null;
@@ -1645,10 +1692,18 @@ async function boot() {
   $("r-scroll").addEventListener("click", () => mic.kick());
 
   renderHome();
+  initInstall(toast);
   void processQueue();
   if (await isModelCached(MODEL_KEY)) void ensureEngine().catch(() => undefined);
   else setEngine("absent", "");
   registerSW();
+  // Raccourci de l'icône (appui long sur l'icône de l'app installée).
+  const go = shortcutTarget();
+  if (go === "hifz") openSetup();
+  else if (go === "libre") $("go-free").click();
+  else if (go === "test") openTestSetup();
+  else if (go === "atelier") openAtelierSetup();
+  else if (go === "memo") { renderMemo(); show("memo"); }
 }
 
 void boot().catch((e) => {

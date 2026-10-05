@@ -10,7 +10,7 @@ if (await page.evaluate(() => window.__murattil.engineState) === "absent") await
 await page.waitForFunction(() => window.__murattil.engineState === "ready", null, { timeout: 120000 });
 await page.click("#go-hifz");
 await page.selectOption("#sel-surah", "67"); await page.fill("#in-from", "1"); await page.fill("#in-to", "4"); await page.dispatchEvent("#in-to", "input");
-await page.evaluate(() => document.querySelector("details.adv").open = true), await page.fill("#in-tajwid", "http://localhost:7861");
+await page.evaluate(() => document.querySelectorAll("details.adv").forEach((d) => { d.open = true; })), await page.fill("#in-tajwid", "http://localhost:7861");
 await page.click("#btn-start-hifz");
 await page.waitForTimeout(70000);
 console.log("barre pendant la séance :", await page.textContent("#tj-bar"));

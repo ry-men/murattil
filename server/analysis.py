@@ -5,6 +5,7 @@ Ce module ne dépend pas du modèle (testable sans GPU) : il reçoit les phonèm
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field, asdict
 from functools import lru_cache
 
@@ -56,6 +57,11 @@ class WordError:
     heard: str
     rule_ar: str = ""
     rule_fr: str = ""
+    ph: tuple = ()  # positions (début, fin) dans les phonèmes de référence de l'ayah
+    exp_len: int | None = None  # madd : durée attendue / entendue
+    got_len: int | None = None
+    confidence: float | None = None  # log P(faute) - log P(correct) : plus c'est grand, plus c'est sûr
+    noise: str = ""  # famille de bruit connue du modèle (si son filtre est désactivé)
 
 
 @dataclass
@@ -66,6 +72,7 @@ class AyahResult:
     reference: str
     predicted: str
     errors: list[WordError] = field(default_factory=list)
+    pred_span: tuple = ()  # (début, fin) de l'ayah dans les phonèmes prédits du segment
 
 
 def default_moshaf() -> MoshafAttributes:
@@ -109,6 +116,8 @@ def _describe(err, word_text: str) -> tuple[str, str, str, str]:
         if err.expected_len is not None and err.predicted_len is not None:
             longer = "trop long" if err.predicted_len > err.expected_len else "trop court"
             msg = f"{rule_fr or 'Tajwid'} : {longer} ({err.predicted_len} temps au lieu de {err.expected_len})"
+        elif err.speech_error_type == "delete" and not rule_fr and exp and set(exp) <= set("اۥۦ"):
+            msg = "Voyelle longue oubliée : allonger 2 temps (madd naturel)"
         elif err.speech_error_type == "delete":
             msg = f"{rule_fr or 'Règle de tajwid'} non appliquée"
         else:
@@ -137,10 +146,77 @@ def _describe(err, word_text: str) -> tuple[str, str, str, str]:
     return "harf", "Prononciation différente", rule_ar, rule_fr
 
 
-def _keep(err, word_idx: int, n_words: int, text: str = "") -> bool:
-    """Filtre les « erreurs » qui sont des variantes admises."""
+# Filtres calibrés sur 126 ayahs de 7 récitateurs professionnels (EveryAyah, test) : octobre 2026.
+# Chaque filtre retire une famille de fausses fautes du modèle (voir tests/calibrate.py).
+# True = famille toujours retirée ; False = gardée, puis jugée par le filtre de confiance (confidence_filter),
+# avec un seuil plus haut pour les familles bruitées (EXTRA_DELTA). Mesuré oct. 2026 sur 126 ayahs de pros :
+# avec ces réglages, chadda / confusion / voyelle / bord n'ajoutent presque aucune fausse faute (tests/llr_eval.py).
+FILTERS = {"bord": False, "ghunna1": True, "chadda": False, "voyelle": False, "confusion": False, "reprise": True}
+EXTRA_DELTA = {"bord": 8.0, "voyelle": 4.0}
+# Confusions de lettres du modèle (fréquentes chez les pros, rares comme vraie faute).
+MODEL_CONFUSIONS = {("ط", "ق")}
+_VOWELS = re.compile("[\u064B-\u0652]")
+
+
+_UNITS = re.compile("[ء-يں۾]")
+NASALS = "نمں۾"
+
+
+def _units(s: str) -> str:
+    """Lettres, y compris ن / م cachés (ikhfa, iqlab) : une lettre répétée = une unité de durée."""
+    return "".join(_UNITS.findall(s))
+
+
+def _ghunna(exp: str, got: str) -> str | None:
+    """Message clair pour la ghunna, l'ikhfa et l'iqlab (au lieu de « chadda manquante »)."""
+    eu, gu = _units(exp), _units(got)
+    if not eu or len(set(eu)) != 1 or eu[0] not in NASALS or len(eu) < 3:
+        return None
+    c = eu[0]
+    if c in "نم":  # نّ / مّ : ghunna de 2 temps
+        if gu and set(gu) <= {c} and len(gu) <= len(eu) - 2:
+            return f"Ghunna trop courte sur « {c}ّ » : tenir 2 temps"
+        return None
+    letter = "ن" if c == "ں" else "م"
+    rule = "Ikhfa" if c == "ں" else "Ghunna (iqlab / ikhfa chafawi)"
+    if not gu:
+        return f"{rule} non appliqué : nasaliser le « {letter} »"
+    if set(gu) <= set("نم"):
+        return f"{rule} : « {letter} » prononcé net au lieu d'être caché avec ghunna"
+    if set(gu) <= {c} and len(gu) <= len(eu) - 2:
+        return f"{rule} trop court : tenir la ghunna 2 temps"
+    return None
+
+
+def _model_noise(err, n_ph: int | None) -> str | None:
+    """Famille de fausse faute typique du modèle (voir FILTERS), ou None."""
+    exp, got = err.expected_ph or "", err.preditected_ph or ""
+    el, gl = _letters(exp), _letters(got)
+    eu, gu = _units(exp), _units(got)
+    ev, gv = "".join(_VOWELS.findall(exp)), "".join(_VOWELS.findall(got))
+    start, end = err.ph_pos
+    # Bord du segment : la toute 1re ou dernière lettre peut être coupée par le découpage audio.
+    if err.speech_error_type == "delete" and (start == 0 or (n_ph is not None and end >= n_ph)):
+        return "bord"
+    # Même lettre, une unité de plus ou de moins.
+    if eu and gu and len(set(eu + gu)) == 1 and abs(len(eu) - len(gu)) == 1 and (gv == ev or not gv):
+        # ghunna (ن / م, 4 unités contre 3) : marge de mesure ; chadda d'une autre lettre (2 contre 1) : vraie faute possible.
+        return "ghunna1" if eu[0] in NASALS and max(len(eu), len(gu)) >= 3 else "chadda"
+    # Voyelle brève non entendue alors que la lettre est bien là.
+    if el and el == gl and ev and not gv:
+        return "voyelle"
+    if (el[:1], gl[:1]) in MODEL_CONFUSIONS:
+        return "confusion"
+    return None
+
+
+def _keep(err, word_idx: int, n_words: int, text: str = "", n_ph: int | None = None) -> bool:
+    """Filtre les « erreurs » qui sont des variantes admises ou du bruit connu du modèle."""
     # Début d'ayah avec hamzat al-wasl : la hamza disparaît si on lie avec l'ayah précédente (wasl).
     if word_idx == 0 and text.startswith("\u0671") and err.speech_error_type == "delete" and _letters(err.expected_ph or "") in ("ء", ""):
+        return False
+    # Durée de madd : un écart d'un seul temps est dans la marge normale (et de mesure) -> pas signalé.
+    if err.expected_len is not None and err.predicted_len is not None and abs(err.predicted_len - err.expected_len) < 2:
         return False
     rules = err.ref_tajweed_rules or err.replaced_tajweed_rules or []
     for r in rules:
@@ -213,7 +289,9 @@ def _merge_word_omissions(errors: list[WordError], words: list[str]) -> list[Wor
         missing = "".join(_letters(e.expected) for e in errs if e.message.startswith("Lettre oubliée") or e.heard == "")
         letters = _letters(words[w])
         if letters and len(missing) >= 0.6 * len(letters) and all(e.heard == "" for e in errs):
-            out.append(WordError(w, words[w], "mot", "Mot oublié", words[w], ""))
+            spans = [e.ph for e in errs if e.ph]
+            ph = (min(a for a, _ in spans), max(b for _, b in spans)) if spans else ()
+            out.append(WordError(w, words[w], "mot", "Mot oublié", words[w], "", ph=ph))
         else:
             out.extend(errs)
     return sorted(out, key=lambda e: e.word)
@@ -229,7 +307,9 @@ def _merge_word_omissions(errors: list[WordError], words: list[str]) -> list[Wor
         missing = "".join(_letters(e.expected) for e in errs if e.heard == "")
         letters = _letters(words[w])
         if letters and len(missing) >= 0.6 * len(letters) and all(e.heard == "" for e in errs):
-            out.append(WordError(w, words[w], "mot", "Mot oublié", words[w], ""))
+            spans = [e.ph for e in errs if e.ph]
+            ph = (min(a for a, _ in spans), max(b for _, b in spans)) if spans else ()
+            out.append(WordError(w, words[w], "mot", "Mot oublié", words[w], "", ph=ph))
         else:
             out.extend(errs)
     return sorted(out, key=lambda e: e.word)
@@ -267,19 +347,68 @@ def analyze_segment(
         cov = Levenshtein.ratio(ph.phonemes, pred_slice) if ph.phonemes else 0.0
         if ayah_from <= a <= ayah_to and cov >= min_coverage:
             words = text.split()
-            res = AyahResult(surah, a, round(cov, 3), ph.phonemes, pred_slice)
-            for err in explain_error(uthmani_text=text, ref_ph_text=ph.phonemes, predicted_ph_text=pred_slice, mappings=ph.mappings):
+            res = AyahResult(surah, a, round(cov, 3), ph.phonemes, pred_slice, pred_span=(ps, pe))
+            errs = explain_error(uthmani_text=text, ref_ph_text=ph.phonemes, predicted_ph_text=pred_slice, mappings=ph.mappings)
+            # Reprise (l'élève répète un bout de l'ayah) : 3 insertions ou plus au même endroit.
+            # Ce n'est pas une faute de tajwid ; le suivi en direct gère déjà les reprises.
+            ins = Counter(tuple(e.ph_pos) for e in errs if e.speech_error_type == "insert")
+            for err in errs:
+                if FILTERS.get("reprise", True) and err.speech_error_type == "insert" and ins[tuple(err.ph_pos)] >= 3:
+                    continue
                 w = text[: err.uthmani_pos[0]].count(" ")
                 w = min(w, len(words) - 1)
-                if not _keep(err, w, len(words), text):
+                fam = _model_noise(err, len(ph.phonemes))
+                if fam and FILTERS.get(fam, True):
+                    continue
+                if not _keep(err, w, len(words), text, len(ph.phonemes)):
                     continue
                 cat, msg, rar, rfr = _describe(err, words[w])
-                res.errors.append(WordError(w, words[w], cat, msg, err.expected_ph or "", err.preditected_ph or "", rar, rfr))
+                gh = _ghunna(err.expected_ph or "", err.preditected_ph or "")
+                if gh:
+                    cat, msg = "tajwid", gh
+                elif fam == "chadda":
+                    eu, gu = _units(err.expected_ph or ""), _units(err.preditected_ph or "")
+                    cat, msg = "haraka", (f"Chadda oubliée sur « {eu[0]} »" if len(gu) < len(eu) else f"Chadda en trop sur « {eu[0]} »")
+                elif fam == "voyelle":
+                    cat, msg = "haraka", "Voyelle brève (haraka) non prononcée"
+                res.errors.append(WordError(w, words[w], cat, msg, err.expected_ph or "", err.preditected_ph or "", rar, rfr, tuple(err.ph_pos), err.expected_len, err.predicted_len, noise=fam or ""))
             res.errors = _merge_word_omissions(res.errors, words)
             res.errors = _merge_word_omissions(res.errors, words)
             out.append(res)
         start = end
     return out
+
+
+# Rapport de vraisemblance (log) minimal pour garder une faute : calibré sur 126 ayahs de pros
+# Seuil par défaut (réglage « normal » de l'app) : 0,08 fausse faute par ayah chez les pros (tests/llr_eval.py).
+MIN_DELTA = 4.0
+
+
+def confidence_filter(results: list[AyahResult], predicted: str, loglik, min_delta: float = MIN_DELTA) -> None:
+    """Garde une faute seulement si le modèle préfère nettement la version fautive à la version correcte.
+
+    loglik(texte) -> log P(texte | audio) (CTC sur tout le segment). Pour chaque faute :
+      A = phonèmes entendus hors de l'ayah + référence exacte de l'ayah
+      B = pareil, mais avec seulement cette faute
+    delta = loglik(B) - loglik(A). Petit delta : le modèle hésite, la faute n'est pas fiable.
+    """
+    for r in results:
+        if not r.errors or not r.pred_span:
+            continue
+        ps, pe = r.pred_span
+        before, after, ref = predicted[:ps], predicted[pe:], r.reference
+        base = loglik(before + ref + after)
+        kept = []
+        for e in r.errors:
+            st, en = e.ph if len(e.ph) == 2 else (None, None)
+            if st is None or ref[st:en] != (e.expected or ""):
+                kept.append(e)  # faute regroupée (mot entier…) : position inconnue, on la garde
+                continue
+            delta = loglik(before + ref[:st] + (e.heard or "") + ref[en:] + after) - base
+            e.confidence = round(delta, 1)
+            if delta >= min_delta + EXTRA_DELTA.get(e.noise, 0.0):
+                kept.append(e)
+        r.errors = kept
 
 
 def to_json(results: list[AyahResult]) -> list[dict]:
@@ -304,6 +433,17 @@ SIFA_FR = {
 }
 
 
+# Sifat gardées (calibrage oct. 2026, 126 ayahs de pros) : les autres attributs (hams/jahr, shidda/rakhawa,
+# safir, takrir, tafashi, istitala, ghunna) donnent ~0,8 fausse faute par ayah chez les pros, même à 99 % de
+# probabilité : non fiables. On garde 2 fautes utiles pour un élève, à ~0,02 fausse faute par ayah :
+#  - lettre épaisse prononcée fine (ر, ق…), probabilité >= 0,99 ;
+#  - qalqala absente sur ق ط ب ج د, probabilité >= 0,9.
+SIFA_RULES = {
+    "tafkheem_or_taqeeq": (0.99, {("mofakham", "moraqaq")}),
+    "qalqla": (0.9, {("moqalqal", "not_moqalqal")}),
+}
+
+
 def sifat_errors(pred_sifat, surah: int, ayah: int, moshaf: MoshafAttributes | None = None, min_prob: float = 0.7) -> list[WordError]:
     """Compare les sifat prédites (Muaalem) à celles de la référence, lettre par lettre."""
     moshaf = moshaf or default_moshaf()
@@ -325,13 +465,13 @@ def sifat_errors(pred_sifat, surah: int, ayah: int, moshaf: MoshafAttributes | N
         for k in range(i2 - i1):
             r, p = ref.sifat[i1 + k], pred_sifat[j1 + k]
             w = min(text[: ph2u.get(starts[i1 + k], 0)].count(" "), len(words) - 1)
-            for attr in SIFA_ATTRS:
+            for attr, (thr, kinds) in SIFA_RULES.items():
                 unit = getattr(p, attr, None)
                 if unit is None:
                     continue
                 got, prob = getattr(unit, "text", None), getattr(unit, "prob", 0.0)
                 exp = getattr(r, attr)
-                if got and got != exp and prob >= min_prob:
+                if got and got != exp and (exp, got) in kinds and prob >= max(thr, min_prob):
                     letter = _letters(r.phonemes)[:1] or r.phonemes[:1]
                     msg = f"{letter} : {SIFA_FR.get(exp, exp)} attendu, entendu {SIFA_FR.get(got, got)}"
                     out.append(WordError(w, words[w], "sifa", msg, exp, got, attr, SIFA_FR.get(exp, exp)))

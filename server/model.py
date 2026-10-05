@@ -26,6 +26,7 @@ class Muaalem:
         self.tokenizer = MultiLevelTokenizer(name)
         self.model = Wav2Vec2BertForMultilevelCTC.from_pretrained(name).to(self.device, dtype=self.dtype).eval()
         self.vocab = self.tokenizer.id_to_vocab["phonemes"]
+        self.ids = {c: int(i) for i, c in self.vocab.items() if int(i) != 0}
 
     @torch.inference_mode()
     def analyze(self, wave: np.ndarray, ref_out):
@@ -46,21 +47,40 @@ class Muaalem:
             chunked_phonemes_batch=chunked, ref_chuncked_phonemes_batch=[[x.phonemes for x in ref_out.sifat]], phonemes_units=ph_units,
         )
         sifat = format_sifat(level_to_units, chunked, self.tokenizer)[0]
-        return ph_units[0].text, sifat
+        return ph_units[0].text, sifat, torch.log(probs["phonemes"][0].clamp_min(1e-12))
 
     @torch.inference_mode()
-    def phonemes(self, wave: np.ndarray) -> str:
-        """Phonèmes (rasm phonétique de quran-transcript) pour un audio de 15 s maximum."""
-        feats = self.processor(wave, sampling_rate=SR, return_tensors="pt")
-        feats = {k: v.to(self.device, dtype=self.dtype) for k, v in feats.items()}
-        logits = self.model(**feats, return_dict=False)[0]["phonemes"][0]
-        ids = logits.argmax(-1).cpu().tolist()
+    def logprobs(self, wave: np.ndarray) -> torch.Tensor:
+        """Log-probabilités des phonèmes (T x V, float32 sur CPU), audio découpé en morceaux de 14 s max."""
+        out = []
+        for part in split_long(wave):
+            feats = self.processor(part, sampling_rate=SR, return_tensors="pt")
+            feats = {k: v.to(self.device, dtype=self.dtype) for k, v in feats.items()}
+            logits = self.model(**feats, return_dict=False)[0]["phonemes"][0]
+            out.append(torch.log_softmax(logits.float(), dim=-1).cpu())
+        return torch.cat(out)
+
+    def greedy(self, lp: torch.Tensor) -> str:
         out, prev = [], 0
-        for i in ids:
+        for i in lp.argmax(-1).tolist():
             if i != 0 and i != prev:
                 out.append(self.vocab[int(i)])
             prev = i
         return "".join(out)
+
+    def loglik(self, lp: torch.Tensor, text: str) -> float:
+        """log P(text | audio) par CTC (blank = 0)."""
+        ids = [self.ids[c] for c in text if c in self.ids]
+        if not ids or len(ids) > lp.shape[0]:
+            return -1e9
+        tgt = torch.tensor(ids)
+        loss = torch.nn.functional.ctc_loss(lp.unsqueeze(1), tgt.unsqueeze(0), torch.tensor([lp.shape[0]]), torch.tensor([len(ids)]),
+                                            blank=0, reduction="sum", zero_infinity=True)
+        return -float(loss)
+
+    def phonemes(self, wave: np.ndarray) -> str:
+        """Phonèmes (rasm phonétique de quran-transcript)."""
+        return self.greedy(self.logprobs(wave))
 
 
 def split_long(wave: np.ndarray, max_s: float = 14.0) -> list[np.ndarray]:

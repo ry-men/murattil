@@ -23,7 +23,7 @@ import soundfile as sf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from analysis import analyze_segment, default_moshaf, to_json
+from analysis import MIN_DELTA, analyze_segment, confidence_filter, default_moshaf, to_json
 
 app = FastAPI(title="Murattil · analyse tajwid (Quran Muaalem)")
 app.add_middleware(
@@ -82,6 +82,7 @@ async def analyze(
     madd_mottasel_len: int = Form(4),
     madd_aared_len: int = Form(4),
     sifat: str = Form("0"),
+    min_delta: float = Form(MIN_DELTA),
 ):
     t0 = time.time()
     if not (1 <= surah <= 114) or ayah_from < 1 or ayah_to < ayah_from:
@@ -100,15 +101,25 @@ async def analyze(
         "madd_mottasel_waqf": max(madd_mottasel_len, 4),
         "madd_aared_len": madd_aared_len,
     })
+    lp = None
     # Atelier : une seule ayah, analyse complète avec les sifat (tafkhim, qalqala, ghunna…).
     if sifat == "1" and ayah_from == ayah_to and len(wave) <= 40 * 16000 and hasattr(m, "analyze"):
         from analysis import _phonetize, ayah_text, sifat_errors
         ref = _phonetize(ayah_text(surah, ayah_from), moshaf, surah)
-        predicted, pred_sifat = m.analyze(wave, ref)
+        predicted, pred_sifat, lp = m.analyze(wave, ref)
         results = analyze_segment(predicted, surah, ayah_from, ayah_to, moshaf, include_basmala=basmala == "1")
+        if hasattr(m, "loglik"):
+            confidence_filter(results, predicted, lambda t: m.loglik(lp, t), min_delta)
         for r in results:
             r.errors.extend(sifat_errors(pred_sifat, surah, r.ayah, moshaf))
     else:
-        predicted = "".join(m.phonemes(part) for part in split_long(wave))
+        if hasattr(m, "logprobs"):
+            lp = m.logprobs(wave)
+            predicted = m.greedy(lp)
+        else:  # ancien modèle / modèle de test
+            predicted = "".join(m.phonemes(part) for part in split_long(wave))
         results = analyze_segment(predicted, surah, ayah_from, ayah_to, moshaf, include_basmala=basmala == "1")
+        if lp is not None:
+            # Filtre de confiance : on ne garde que les fautes que le modèle préfère nettement (voir analysis.py).
+            confidence_filter(results, predicted, lambda t: m.loglik(lp, t), min_delta)
     return {"ayahs": to_json(results), "predicted": predicted, "ms": int((time.time() - t0) * 1000)}

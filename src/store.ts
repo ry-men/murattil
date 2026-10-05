@@ -46,8 +46,9 @@ export function clearHistory(): void {
   try { localStorage.removeItem(KEY); } catch { /* */ }
 }
 
-export interface Prefs { display: "hidden" | "peek" | "visible"; liveTajwid: boolean; memorized: number[]; hide?: boolean; surah: number; from: number; to: number; fontScale: number; phoneFilters: boolean; sensitive: boolean; verify: boolean; tajwidUrl: string; tajwidEngine: "auto" | "mini" | "server" }
-const DEFAULT_PREFS: Prefs = { display: "hidden", liveTajwid: true, memorized: [], surah: 67, from: 1, to: 30, fontScale: 1, phoneFilters: false, sensitive: true, verify: true, tajwidUrl: "", tajwidEngine: "auto" };
+export type Severity = "souple" | "normal" | "strict";
+export interface Prefs { display: "hidden" | "peek" | "visible"; liveTajwid: boolean; memorized: number[]; hide?: boolean; surah: number; from: number; to: number; fontScale: number; phoneFilters: boolean; sensitive: boolean; verify: boolean; tajwidUrl: string; tajwidEngine: "auto" | "mini" | "server"; tajweedColors: boolean; tjSeverity: Severity }
+const DEFAULT_PREFS: Prefs = { display: "hidden", liveTajwid: true, memorized: [], surah: 67, from: 1, to: 30, fontScale: 1, phoneFilters: false, sensitive: true, verify: true, tajwidUrl: "", tajwidEngine: "auto", tajweedColors: false, tjSeverity: "normal" };
 
 // Serveur tajwid par défaut : écrit dans config.json par le workflow de déploiement (rien à coller).
 let defaultServer = "";

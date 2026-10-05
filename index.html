@@ -9,6 +9,10 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icon-192.png" />
   <link rel="apple-touch-icon" href="./icon-192.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Murattil" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
@@ -26,6 +30,18 @@
         <div class="progress" hidden><div class="bar"></div></div>
         <p class="muted" id="engine-detail"></p>
         <button id="btn-install" class="btn primary">Télécharger maintenant</button>
+      </div>
+
+      <div id="install-card" class="card install-card" hidden>
+        <div class="install-row">
+          <img src="./icon-192.png" alt="" width="44" height="44" />
+          <div><h2>Installer Murattil</h2><p class="muted">Icône sur l'écran d'accueil, plein écran, marche sans internet.</p></div>
+        </div>
+        <p id="install-ios" class="muted" hidden>Sur iPhone : touche Partager, puis « Sur l'écran d'accueil ».</p>
+        <div class="install-actions">
+          <button id="btn-pwa-later" class="btn ghost">Plus tard</button>
+          <button id="btn-pwa-install" class="btn primary">Installer</button>
+        </div>
       </div>
 
       <p id="streak" class="streak muted"></p>
@@ -93,11 +109,20 @@
           <option value="visible">Visible</option>
         </select>
       </label>
+      <label class="toggle"><input type="checkbox" id="chk-tj-colors" /><span>Couleurs du tajwid sur le texte</span></label>
+      <details class="adv" id="tjc-legend"><summary>Légende des couleurs</summary><p class="muted">Source : projet quran-tajweed (cpfair, CC-BY 4.0), règles de la riwaya de Hafs.</p></details>
       <label class="field"><span>Moteur du tajwid</span>
         <select id="sel-tj-engine">
           <option value="auto">Automatique (téléphone si le modèle est disponible)</option>
           <option value="mini">Sur le téléphone (muaalem-mini, hors ligne)</option>
           <option value="server">Serveur (Muaalem complet, en ligne)</option>
+        </select>
+      </label>
+      <label class="field"><span>Sévérité du tajwid (serveur)</span>
+        <select id="sel-tj-severity">
+          <option value="souple">Souple : seulement les fautes très sûres</option>
+          <option value="normal">Normal (recommandé)</option>
+          <option value="strict">Strict : plus de fautes, parfois une fausse alerte</option>
         </select>
       </label>
       <label class="toggle"><input type="checkbox" id="chk-live-tajwid" /><span>Tajwid en direct quand tu es en ligne (analyse de chaque ayah par le serveur)</span></label>
@@ -297,6 +322,7 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
+  <div id="update-bar" class="update-bar" role="status" hidden><span>Nouvelle version de Murattil prête.</span><button id="btn-update" class="btn primary">Mettre à jour</button></div>
   <script type="module" src="./src/main.ts"></script>
 </body>
 </html>

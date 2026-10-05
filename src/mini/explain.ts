@@ -118,7 +118,7 @@ function describe(e: RawErr): { category: WordError["category"]; message: string
   if (e.type === "tajweed") {
     if (e.rule && e.gotLen !== undefined && ALLOWED[e.rule.en]?.includes(e.gotLen)) return null;
     if (e.expLen !== undefined && e.gotLen !== undefined) {
-      if (e.expLen === e.gotLen) return null;
+      if (Math.abs(e.expLen - e.gotLen) < 2) return null; // un temps d'écart : marge normale
       return { category: "tajwid", message: `${rfr} : ${e.gotLen > e.expLen ? "trop long" : "trop court"} (${e.gotLen} temps au lieu de ${e.expLen})` };
     }
     return { category: "tajwid", message: e.sp === "delete" ? `${rfr || "Règle de tajwid"} non appliquée` : `${rfr || "Règle de tajwid"} mal appliquée` };

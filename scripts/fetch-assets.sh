@@ -25,4 +25,6 @@ if curl -fsL -o /tmp/muaalem_mini.web.onnx "$REL/muaalem_mini.web.onnx" && curl 
 else
   rm -f models/muaalem_mini_vocab.json; echo "muaalem-mini absent (pas encore exporté)"
 fi
+# Couleurs du tajwid (cpfair/quran-tajweed, CC-BY 4.0) recalées exactement sur notre texte ; facultatif.
+python3 ../scripts/gen_tajweed.py .. || echo "couleurs du tajwid indisponibles"
 echo "Assets OK"

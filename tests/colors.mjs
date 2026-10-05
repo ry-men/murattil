@@ -1,0 +1,22 @@
+// Couleurs du tajwid : texte visible, Al-Mulk 1-4, capture d'écran.
+import { chromium } from "playwright";
+const b = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome", args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"] });
+const ctx = await b.newContext({ permissions: ["microphone"], viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, colorScheme: process.env.DARK ? "dark" : "light" });
+const page = await ctx.newPage();
+const errs = []; page.on("pageerror", (e) => errs.push(e.message));
+await page.goto("http://localhost:4173/");
+await page.waitForFunction(() => window.__murattil?.engineState && window.__murattil.engineState !== "unknown");
+if (await page.evaluate(() => window.__murattil.engineState) === "absent") await page.click("#btn-install");
+await page.waitForFunction(() => window.__murattil.engineState === "ready", null, { timeout: 120000 });
+await page.click("#go-hifz");
+await page.selectOption("#sel-surah", "67"); await page.fill("#in-from", "1"); await page.fill("#in-to", "4"); await page.dispatchEvent("#in-to", "input");
+await page.selectOption("#sel-display", process.env.MODE ?? "visible");
+await page.setChecked("#chk-tj-colors", true);
+await page.click("#tjc-legend summary");
+await page.screenshot({ path: "tests/shots/colors-setup.png", fullPage: true });
+await page.click("#btn-start-hifz");
+await page.waitForTimeout(2500);
+console.log("spans colorés :", await page.$$eval(".tjc", (l) => l.length), "| exemples :", await page.$$eval(".tjc", (l) => l.slice(0, 4).map((x) => x.className + "=" + x.textContent)));
+await page.screenshot({ path: `tests/shots/colors-${process.env.MODE ?? "visible"}.png` });
+console.log("erreurs :", errs);
+await b.close();

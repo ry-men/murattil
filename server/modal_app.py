@@ -1,4 +1,4 @@
-"""Déploiement GPU sur Modal (serverless, facturé à la seconde, s'éteint tout seul).
+"""Déploiement GPU sur Modal (serverless, facturé à la seconde, s'éteint tout seul 2 min après la dernière requête).
 
     cd server && modal deploy modal_app.py
 URL : https://<compte>--murattil-tajwid-web.modal.run, écrite toute seule dans public/config.json par le workflow modal.yml.
@@ -32,7 +32,7 @@ image = (
 app = modal.App("murattil-tajwid", image=image)
 
 
-@app.function(gpu="T4", scaledown_window=300, timeout=600, max_containers=1)
+@app.function(gpu="T4", scaledown_window=120, timeout=600, max_containers=1)
 @modal.concurrent(max_inputs=8)
 @modal.asgi_app()
 def web():

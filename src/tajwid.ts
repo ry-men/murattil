@@ -1,3 +1,9 @@
+import { loadPrefs, type Severity } from "./store";
+
+/** Sévérité du serveur : écart de confiance minimal (log) pour garder une faute. Calibré sur des récitateurs pros. */
+export const SEVERITY_DELTA: Record<Severity, number> = { souple: 8, normal: 4, strict: 1 };
+function minDelta(): string { return String(SEVERITY_DELTA[loadPrefs().tjSeverity] ?? SEVERITY_DELTA.normal); }
+
 // Analyse tajwid fine via le serveur Quran Muaalem (facultatif, après la séance).
 export interface TajwidError {
   surah: number;
@@ -119,6 +125,7 @@ export async function analyzeSession(
         fd.append("ayah_from", String(s.from));
         fd.append("ayah_to", String(s.to));
         fd.append("basmala", s.from === 1 ? "1" : "0");
+        fd.append("min_delta", minDelta());
         const r = await fetch(base + "/analyze", { method: "POST", body: fd, signal: AbortSignal.timeout(120000) });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const j = await r.json() as { ayahs: { surah: number; ayah: number; errors: Omit<TajwidError, "surah" | "ayah">[] }[] };
@@ -189,6 +196,7 @@ export async function analyzeOne(url: string, file: Blob, surah: number, from: n
   fd.append("ayah_from", String(from));
   fd.append("ayah_to", String(to));
   fd.append("basmala", from === 1 ? "1" : "0");
+  fd.append("min_delta", minDelta());
   const r = await fetch(url.replace(/\/$/, "") + "/analyze", { method: "POST", body: fd, signal: AbortSignal.timeout(timeoutMs) });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   const j = await r.json() as { ayahs: { surah: number; ayah: number; errors: Omit<TajwidError, "surah" | "ayah">[] }[] };

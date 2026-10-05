@@ -35,7 +35,7 @@ if (mode === "hifz") {
   await page.fill("#in-to", to);
   await page.dispatchEvent("#in-to", "input");
   if (process.env.SENS) await page.setChecked("#chk-sensitive", process.env.SENS === "1");
-  if (process.env.TAJWID) await page.evaluate(() => document.querySelector("details.adv").open = true), await page.fill("#in-tajwid", process.env.TAJWID);
+  if (process.env.TAJWID) await page.evaluate(() => document.querySelectorAll("details.adv").forEach((d) => { d.open = true; })), await page.fill("#in-tajwid", process.env.TAJWID);
   if (show) await page.screenshot({ path: `${shots}/${tag}-1-setup.png` });
   await page.click("#btn-start-hifz");
 } else {
@@ -84,6 +84,9 @@ if (process.env.TAJWID) {
   await page.waitForFunction(() => document.getElementById("btn-tajwid").hidden || document.getElementById("btn-tajwid").textContent.includes("Réessayer"), null, { timeout: 120000 });
   tajwid = await page.evaluate(() => ({ info: document.getElementById("tajwid-info").textContent, items: [...document.querySelectorAll("#tajwid-list li")].map((l) => l.textContent) }));
   if (show) await page.screenshot({ path: `${shots}/${tag}-5-tajwid.png`, fullPage: true });
+} else {
+  await page.waitForTimeout(15000); // laisse finir les analyses du modèle mini
+  tajwid = await page.evaluate(() => ({ info: document.getElementById("tajwid-info")?.textContent, items: [...document.querySelectorAll("#tajwid-list li")].map((l) => l.textContent), mini: window.__murattil.session.log?.filter?.((e) => e.type === "mini").length }));
 }
 if (process.env.DIAG) {
   const dl = [];

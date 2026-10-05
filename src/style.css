@@ -213,6 +213,17 @@ body[data-screen="atelier"] #s-atelier { display: flex; }
 
 .toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 96px); transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; z-index: 50; max-width: calc(100% - 32px); }
 
+.install-card h2 { margin: 0 0 2px; font-size: 17px; }
+.install-card p { margin: 0; }
+.install-row { display: flex; gap: 12px; align-items: center; margin-bottom: 12px; }
+.install-row img { border-radius: 10px; flex: none; }
+.install-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 10px; }
+#install-ios { margin-top: 4px; }
+.update-bar { position: fixed; left: 12px; right: 12px; top: calc(env(safe-area-inset-top) + 10px); z-index: 60; display: flex; gap: 12px; align-items: center; justify-content: space-between; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; box-shadow: var(--shadow); font-size: 14px; }
+.update-bar .btn { padding: 8px 12px; flex: none; }
+/* App installée : pas de rebond ni de sélection accidentelle sur les boutons. */
+@media (display-mode: standalone) { body { overscroll-behavior-y: contain; } button { -webkit-user-select: none; user-select: none; } }
+
 @media (min-width: 600px) { :root { --q-size: 34px; } }
 
 .tajwid-box h3 { margin: 0 0 6px; font-size: 15px; }
@@ -273,3 +284,31 @@ body.atelier .r-scroll .mushaf { font-size: calc(var(--q-size) * 1.15); }
 
 details.adv { margin-top: 4px; }
 details.adv > summary { cursor: pointer; color: var(--muted, #777); font-size: 0.9rem; padding: 6px 0; }
+
+/* Couleurs du tajwid (données cpfair/quran-tajweed). */
+.tjc-hamzat_wasl, .tjc-lam_shamsiyyah, .tjc-silent { color: #9aa0a6; }
+.tjc-madd_2 { color: #2f6fe0; }
+.tjc-madd_246 { color: #5b5fe0; }
+.tjc-madd_muttasil { color: #1a3fb0; }
+.tjc-madd_munfasil { color: #7a3be0; }
+.tjc-madd_6 { color: #c2185b; }
+.tjc-ghunnah { color: #e8710a; }
+.tjc-ikhfa, .tjc-ikhfa_shafawi { color: #b5179e; }
+.tjc-iqlab { color: #0b93c9; }
+.tjc-idghaam_ghunnah, .tjc-idghaam_shafawi { color: #138a3e; }
+.tjc-idghaam_no_ghunnah { color: #5e9a0a; }
+.tjc-idghaam_mutajaanisain, .tjc-idghaam_mutaqaaribain { color: #7d8a99; }
+.tjc-qalqalah { color: #d32f2f; }
+@media (prefers-color-scheme: dark) {
+  .tjc-madd_2 { color: #7aa7ff; } .tjc-madd_246 { color: #9a9dff; } .tjc-madd_muttasil { color: #6f8fff; }
+  .tjc-madd_munfasil { color: #b58cff; } .tjc-madd_6 { color: #ff6fa3; } .tjc-ghunnah { color: #ffa25c; }
+  .tjc-ikhfa, .tjc-ikhfa_shafawi { color: #f07ee0; } .tjc-iqlab { color: #5cc8f5; }
+  .tjc-idghaam_ghunnah, .tjc-idghaam_shafawi { color: #5fd38b; } .tjc-idghaam_no_ghunnah { color: #a6d65a; }
+  .tjc-qalqalah { color: #ff7b72; }
+}
+/* Texte caché / premières lettres : les couleurs ne doivent pas trahir les mots non récités. */
+.hidden-text .w:not(.ok):not(.hint):not(.miss):not(.bad):not(.err) .tjc,
+.peek-text .w:not(.ok):not(.hint):not(.miss):not(.bad):not(.err) .wr .tjc { color: transparent; }
+/* Les fautes gardent leur couleur rouge. */
+.w.err .tjc { color: inherit; }
+.tjc-legend { list-style: none; padding: 0; margin: 6px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 13px; }

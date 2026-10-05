@@ -16,7 +16,7 @@ docker run -p 7860:7860 murattil-tajwid
 
 ## Modal (GPU, recommandé pour le tajwid en direct)
 
-- GPU T4, facturé à la seconde, s'éteint après 5 min sans requête. Les 30 $ de crédits mensuels gratuits de Modal couvrent largement un usage personnel.
+- GPU T4, facturé à la seconde, s'éteint après 2 min sans requête. Coût : environ 0,6 $/h de T4 + CPU/RAM, soit 3 à 5 centimes par réveil. Les 30 $ de crédits mensuels gratuits de Modal couvrent largement un usage personnel.
 - Réponse en moins d'une seconde par ayah une fois le serveur chaud ; démarrage à froid d'environ 20 à 40 s (l'app réveille le serveur dès l'ouverture d'une séance).
 
 1. Créer un compte sur modal.com (connexion GitHub, sans carte).
@@ -46,6 +46,21 @@ docker run -p 7860:7860 ghcr.io/ry-men/murattil-tajwid:latest
 `POST /analyze` (multipart) : `file` (WAV 16 kHz), `surah`, `ayah_from`, `ayah_to`, `basmala` (0/1), `sifat` (0/1).
 Avec `sifat=1` et une seule ayah (40 s max) : analyse aussi les caractéristiques des lettres (mode Atelier).
 Réponse : par ayah, la liste des erreurs `{word, word_text, category: harf|haraka|tajwid|mot|sifa, message}`.
+
+## Calibration
+
+Mesurée sur 126 ayahs de 7 récitateurs pros (toute faute signalée y est fausse), API complète, une ayah par requête :
+
+| Réglage | Fausses fautes / ayah (pros) | Points / ayah (Ryan) |
+|---|---|---|
+| Sans aucun filtre | 0,55 | 4 |
+| Souple (`min_delta=8`) | 0,05 | 1,65 |
+| Normal (`min_delta=4`, défaut) | 0,08 | 2,08 |
+| Strict (`min_delta=1`) | 0,17 | 2,57 |
+| Sifat (Atelier), avant / après `SIFA_RULES` | 0,84 / 0,02 | |
+
+Filtre de confiance : pour chaque faute, delta = log P(version fautive) - log P(version correcte) (CTC).
+Familles bruitées (`EXTRA_DELTA`) : seuil plus haut. Rejouer : `python tests/llr_eval.py pros` (modèle sur CPU).
 
 ## Tests (sans modèle)
 

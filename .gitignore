@@ -7,3 +7,5 @@ tests/shots
 tests/audio
 __pycache__
 public/models/muaalem_mini*
+public/tajweed.json
+tests/out

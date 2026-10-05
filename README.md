@@ -3,7 +3,7 @@
 App web (PWA) de récitation et de mémorisation du Coran.
 La reconnaissance vocale tourne **sur le téléphone**, sans serveur. Pas de coupure quand le réseau saute.
 
-## Ce que fait la v0.5
+## Ce que fait la v0.6
 
 - **Hifz · Révision** : choix d'une sourate et d'un passage. Le texte reste caché et se dévoile mot par mot pendant la récitation.
 - **Erreurs signalées** : mot oublié, mot différent, haraka douteuse, ayah sautée. Feuille d'erreur avec « Reprendre l'ayah » ou « C'était correct ».
@@ -17,6 +17,8 @@ La reconnaissance vocale tourne **sur le téléphone**, sans serveur. Pas de cou
 - **Serveur automatique** : l'adresse du serveur tajwid est écrite dans `public/config.json` par le workflow de déploiement Modal. L'utilisateur n'a rien à saisir.
 - **Tajwid en direct (en ligne)** : chaque ayah terminée part au serveur Muaalem ; les fautes s'affichent sur le mot (souligné, touche le mot pour le détail). Hors ligne : les ayahs sont gardées sur le téléphone (IndexedDB) et analysées automatiquement au retour du réseau.
 - **Tajwid hors ligne (muaalem-mini)** : un petit modèle (116 M param., ~120 Mo en int8) tourne sur le téléphone. Il repère lettres, harakat et madd ayah par ayah, sans réseau. Il est publié par le workflow `export-mini.yml` (release `mini-v1`) : poids safetensors seulement, révision épinglée, aucun code téléchargé exécuté. Le téléphone utilise plusieurs cœurs (isolation cross-origin par le service worker). Moteur au choix dans Hifz : auto, téléphone ou serveur.
+- **Fiabilité du tajwid** : le modèle mini seul se trompe trop (testé sur des récitateurs professionnels). Ses fautes de lettres ne sont affichées que si le 2e modèle (FastConformer) les confirme ; ses harakat et madd sont ignorés. Un madd à un temps près n'est plus signalé.
+- **Couleurs du tajwid** : texte coloré par règle (ghunna, ikhfa, idgham, iqlab, qalqala, madd…), données cpfair/quran-tajweed (CC-BY 4.0) recalées exactement sur le texte ; légende dans les réglages.
 - **Atelier tajwid** : une ayah à la fois, en murattal. Analyse complète par le serveur Muaalem, avec les sifat (tafkhim, qalqala, ghunna…). Écoute de sa récitation et du récitateur (Alafasy), score, ayah suivante ou recommencer. Hors ligne : analyse par le modèle mini.
 - **Test de mémoire** : début de verset tiré au hasard dans tes sourates, tu continues de mémoire, score par question.
 - **Ma mémorisation + Révision du jour** : sourates déclarées, répétition espacée (1, 2, 4, 7, 14, 30, 60 jours), longues sourates découpées en portions.
