@@ -31,7 +31,11 @@ jobs:
         run: |
           set -o pipefail
           pip install -q modal
-          cd server && modal deploy modal_app.py | tee ../deploy.log
+          cd server
+          if ! modal deploy modal_app.py 2>&1 | tee ../deploy.log; then
+            echo "::error title=modal-deploy::$(tail -c 3000 ../deploy.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            exit 1
+          fi
       - name: Adresse du serveur -> config.json (l'app la lit toute seule)
         if: steps.check.outputs.skip != '1'
         env:
