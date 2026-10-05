@@ -22,7 +22,7 @@ image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("libsndfile1")
     .pip_install(
-        "torch>=2.7.0", "transformers>=4.55.0", "quran-muaalem==0.2.2", "quran-transcript>=0.6.4",
+        "torch>=2.7.0", "transformers>=4.55.0,<5", "quran-muaalem==0.2.2", "quran-transcript>=0.6.4",
         "fastapi>=0.116", "python-multipart>=0.0.20", "soundfile>=0.12", "numpy>=2.2", "Levenshtein>=0.27",
     )
     .run_function(download_model)

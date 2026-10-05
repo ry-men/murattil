@@ -1,6 +1,6 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.7.0
-transformers>=4.55.0
+transformers>=4.55.0,<5
 quran-muaalem==0.2.2
 quran-transcript>=0.6.4
 fastapi>=0.116

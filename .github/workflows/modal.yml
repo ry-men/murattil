@@ -27,7 +27,9 @@ jobs:
           python-version: "3.12"
       - name: Déploiement
         if: steps.check.outputs.skip != '1'
+        shell: bash
         run: |
+          set -o pipefail
           pip install -q modal
           cd server && modal deploy modal_app.py | tee ../deploy.log
       - name: Adresse du serveur -> config.json (l'app la lit toute seule)
