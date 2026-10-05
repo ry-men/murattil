@@ -12,13 +12,15 @@ get https://github.com/yazinsai/tilawa/releases/download/v0.2.0/vocab.json model
 # Facultatif : muaalem-mini (publié par le workflow export-mini) ; absent = fonction désactivée dans l'app.
 REL=https://github.com/${GITHUB_REPOSITORY:-ry-men/murattil}/releases/download/mini-v1
 # Découpé en morceaux de 45 Mo (limite de taille par fichier de l'hébergement) + manifeste lu par l'app.
-if curl -fsL -o /tmp/muaalem_mini.int8.onnx "$REL/muaalem_mini.int8.onnx" && curl -fsL -o models/muaalem_mini_vocab.json "$REL/muaalem_mini_vocab.json"; then
+if curl -fsL -o /tmp/muaalem_mini.web.onnx "$REL/muaalem_mini.web.onnx" && curl -fsL -o models/muaalem_mini_vocab.json "$REL/muaalem_mini_vocab.json"; then
   rm -f models/muaalem_mini.part*
-  split -b 45m -d -a 2 /tmp/muaalem_mini.int8.onnx models/muaalem_mini.part
-  SIZE=$(wc -c < /tmp/muaalem_mini.int8.onnx)
+  split -b 45m -d -a 2 /tmp/muaalem_mini.web.onnx models/muaalem_mini.part
+  SIZE=$(wc -c < /tmp/muaalem_mini.web.onnx)
   PARTS=$(cd models && ls muaalem_mini.part?? | sed 's/.*/"&"/' | paste -sd, -)
-  echo "{\"parts\":[$PARTS],\"size\":$SIZE}" > models/muaalem_mini.parts.json
-  rm -f /tmp/muaalem_mini.int8.onnx
+  # La clé de cache change avec le modèle : le téléphone retélécharge seulement si le modèle a changé.
+  KEY="muaalem-mini-$(sha256sum /tmp/muaalem_mini.web.onnx | cut -c1-12)"
+  echo "{\"parts\":[$PARTS],\"size\":$SIZE,\"key\":\"$KEY\"}" > models/muaalem_mini.parts.json
+  rm -f /tmp/muaalem_mini.web.onnx
   echo "muaalem-mini : $(cat models/muaalem_mini.parts.json)"
 else
   rm -f models/muaalem_mini_vocab.json; echo "muaalem-mini absent (pas encore exporté)"

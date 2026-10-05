@@ -2,7 +2,7 @@
 // Tajwid sur le téléphone : muaalem-mini (116 M paramètres, ONNX int8) + explication des erreurs.
 // Hors ligne, une ayah à la fois, en tâche de fond.
 import * as ort from "onnxruntime-web/wasm";
-import { loadModelParts, isModelCached } from "../model-cache";
+import { loadModelParts, isModelCached, dropOtherModels } from "../model-cache";
 import { extractFeatures } from "./features";
 import { analyzeSegment, type RefData } from "./explain";
 
@@ -17,6 +17,7 @@ const REF = "tajwid_ref.json";
 const CACHE_KEY = "muaalem-mini-int8-v1";
 
 let session: ort.InferenceSession | null = null;
+let threads = 1;
 let vocab: Record<number, string> = {};
 let ref: RefData | null = null;
 const post = (m: unknown) => (self as unknown as Worker).postMessage(m);
@@ -25,20 +26,25 @@ async function init(base: string) {
   const url = (p: string) => new URL(p, base).toString();
   try {
     // Déjà en cache : on charge même hors ligne. Sinon on vérifie que le modèle est publié.
-    let manifest: { parts: string[]; size: number } = { parts: [], size: 0 };
-    if (!(await isModelCached(CACHE_KEY))) {
-      const res = await fetch(url(PARTS)).catch(() => null);
-      const m = res?.ok ? await res.json().catch(() => null) : null; // une page HTML (404 déguisé) = absent
-      if (!m || !Array.isArray(m.parts) || !m.parts.length) { post({ type: "absent" }); return; }
-      manifest = m;
-    }
+    // Manifeste (réseau d'abord, copie du service worker hors ligne) : morceaux, taille, clé de version.
+    const res = await fetch(url(PARTS)).catch(() => null);
+    const manifest = res?.ok ? await res.json().catch(() => null) as { parts: string[]; size: number; key?: string } | null : null; // page HTML (404 déguisé) = absent
+    if (!manifest || !Array.isArray(manifest.parts) || !manifest.parts.length) { post({ type: "absent" }); return; }
+    const key = manifest.key ?? CACHE_KEY;
+    if (!(await isModelCached(key)) && !navigator.onLine) { post({ type: "absent" }); return; }
     const [v, r] = await Promise.all([fetch(url(VOCAB)).then((x) => x.json()), fetch(url(REF)).then((x) => x.json())]);
     vocab = Object.fromEntries(Object.entries(v as Record<string, string>).map(([k, t]) => [Number(k), t]));
     ref = r as RefData;
-    const buf = await loadModelParts(manifest.parts.map((p) => url(`models/${p}`)), CACHE_KEY, manifest.size, (l, t) => post({ type: "loading", percent: t ? Math.round((l / t) * 100) : 0 }));
-    ort.env.wasm.numThreads = 1;
+    const buf = await loadModelParts(manifest.parts.map((p) => url(`models/${p}`)), key, manifest.size, (l, t) => post({ type: "loading", percent: t ? Math.round((l / t) * 100) : 0 }));
+    void dropOtherModels("muaalem-mini-", key); // ancienne version du modèle : place libérée
+    // Multi-thread si la page est isolée (service worker) : 2 à 4 cœurs, en laissant de la place au suivi en direct.
+    const cores = (self as unknown as { navigator: { hardwareConcurrency?: number } }).navigator.hardwareConcurrency ?? 2;
+    threads = self.crossOriginIsolated ? Math.max(1, Math.min(4, cores - 2)) : 1;
+    ort.env.wasm.numThreads = threads;
+    // Multi-thread : moteur ORT servi tel quel depuis ort/ (copié par vite.config.ts).
+    if (threads > 1) ort.env.wasm.wasmPaths = url("ort/");
     session = await ort.InferenceSession.create(buf, { executionProviders: ["wasm"], graphOptimizationLevel: "all" });
-    post({ type: "ready" });
+    post({ type: "ready", threads });
   } catch (e) {
     post({ type: "error", message: e instanceof Error ? e.message : String(e) });
   }

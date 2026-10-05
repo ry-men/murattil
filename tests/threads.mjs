@@ -1,0 +1,22 @@
+// Isolation cross-origin via le service worker + modèle mini multi-thread.
+import { chromium } from "playwright";
+const wav = "tests/audio/multi_067_001_004.wav";
+const b = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome", args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${wav}`] });
+const ctx = await b.newContext({ permissions: ["microphone"] });
+const page = await ctx.newPage();
+const errs = []; page.on("pageerror", (e) => errs.push(e.message)); page.on("console", (m) => { if (m.type() === "error" || m.text().includes("mini")) errs.push(m.text().slice(0, 200)); });
+await page.goto("http://localhost:4173/");
+await page.waitForFunction(() => navigator.serviceWorker.controller, null, { timeout: 30000 }).catch(() => {});
+await page.reload();
+await page.waitForFunction(() => window.__murattil?.engineState && window.__murattil.engineState !== "unknown");
+console.log("isolée :", await page.evaluate(() => self.crossOriginIsolated), "| cœurs :", await page.evaluate(() => navigator.hardwareConcurrency));
+if (await page.evaluate(() => window.__murattil.engineState) === "absent") await page.click("#btn-install");
+await page.waitForFunction(() => window.__murattil.engineState === "ready", null, { timeout: 120000 });
+await page.waitForFunction(() => ["ready", "error", "absent"].includes(window.__murattil.miniState), null, { timeout: 120000 });
+console.log("mini :", await page.evaluate(() => window.__murattil.miniState), "| threads :", await page.evaluate(() => window.__murattil.miniThreads));
+await page.click("#go-atelier"); await page.fill("#at-ayah", "1"); await page.click("#btn-start-atelier");
+await page.waitForFunction(() => document.body.dataset.screen === "atelier", null, { timeout: 60000 });
+await page.waitForFunction(() => !document.querySelector("#at-status").textContent.includes("en cours"), null, { timeout: 90000 });
+console.log("statut :", await page.textContent("#at-status"));
+console.log("erreurs :", errs.filter((e) => !e.includes("cpuid")));
+await b.close();

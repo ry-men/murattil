@@ -16,7 +16,7 @@ La reconnaissance vocale tourne **sur le téléphone**, sans serveur. Pas de cou
 - **Analyse tajwid fine (facultative)** : après la séance, envoi de l'audio à un serveur [Quran Muaalem](https://github.com/obadx/quran-muaalem) (dossier `server/`) qui repère les fautes de lettres, de harakat et de tajwid (madd, ghunna…).
 - **Serveur automatique** : l'adresse du serveur tajwid est écrite dans `public/config.json` par le workflow de déploiement Modal. L'utilisateur n'a rien à saisir.
 - **Tajwid en direct (en ligne)** : chaque ayah terminée part au serveur Muaalem ; les fautes s'affichent sur le mot (souligné, touche le mot pour le détail). Hors ligne : les ayahs sont gardées sur le téléphone (IndexedDB) et analysées automatiquement au retour du réseau.
-- **Tajwid hors ligne (muaalem-mini)** : un petit modèle (116 M param., ~120 Mo en int8) tourne sur le téléphone. Il repère lettres, harakat et madd ayah par ayah, sans réseau. Il est publié par le workflow `export-mini.yml` (release `mini-v1`). Moteur au choix dans Hifz : auto, téléphone ou serveur.
+- **Tajwid hors ligne (muaalem-mini)** : un petit modèle (116 M param., ~120 Mo en int8) tourne sur le téléphone. Il repère lettres, harakat et madd ayah par ayah, sans réseau. Il est publié par le workflow `export-mini.yml` (release `mini-v1`) : poids safetensors seulement, révision épinglée, aucun code téléchargé exécuté. Le téléphone utilise plusieurs cœurs (isolation cross-origin par le service worker). Moteur au choix dans Hifz : auto, téléphone ou serveur.
 - **Atelier tajwid** : une ayah à la fois, en murattal. Analyse complète par le serveur Muaalem, avec les sifat (tafkhim, qalqala, ghunna…). Écoute de sa récitation et du récitateur (Alafasy), score, ayah suivante ou recommencer. Hors ligne : analyse par le modèle mini.
 - **Test de mémoire** : début de verset tiré au hasard dans tes sourates, tu continues de mémoire, score par question.
 - **Ma mémorisation + Révision du jour** : sourates déclarées, répétition espacée (1, 2, 4, 7, 14, 30, 60 jours), longues sourates découpées en portions.
@@ -45,6 +45,7 @@ npx tsx tests/node-run.ts <audio> correction 114 1 6     # rejoue un audio dans 
 node tests/e2e.mjs <wav> hifz 67 1 4 --show             # test navigateur avec micro simulé
 node tests/atelier.mjs                                   # Atelier tajwid (serveur factice tests/mock_tajwid.py)
 npx tsx tests/features.ts && npx tsx tests/explain.ts    # modèle mini : features audio et explication des fautes
+npx tsx tests/mini_onnx.ts out                           # modèle mini exporté : chaîne navigateur = Python
 ```
 
 ## Architecture

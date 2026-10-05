@@ -109,3 +109,16 @@ export async function loadModelParts(
   await put(key, out.buffer);
   return out.buffer;
 }
+
+/** Supprime les anciennes versions d'un modèle (même préfixe, autre clé). */
+export async function dropOtherModels(prefix: string, keep: string): Promise<void> {
+  try {
+    const db = await openDB();
+    const tx = db.transaction(STORE, "readwrite");
+    const st = tx.objectStore(STORE);
+    const req = st.getAllKeys();
+    req.onsuccess = () => { for (const k of req.result) if (typeof k === "string" && k.startsWith(prefix) && k !== keep) st.delete(k); };
+    await new Promise<void>((r) => { tx.oncomplete = () => r(); tx.onabort = () => r(); });
+    db.close();
+  } catch { /* */ }
+}

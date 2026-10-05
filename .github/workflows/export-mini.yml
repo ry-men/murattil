@@ -1,4 +1,6 @@
 name: Exporter muaalem-mini (ONNX pour le téléphone)
+# Aucun code téléchargé n'est exécuté : seulement des poids safetensors, à une révision épinglée
+# (voir scripts/export_mini.py).
 on:
   push:
     branches: [main]
@@ -20,25 +22,37 @@ jobs:
       - name: Dépendances
         run: |
           pip install -q --extra-index-url https://download.pytorch.org/whl/cpu torch
-          pip install -q "transformers>=4.55" onnx onnxruntime soundfile librosa Levenshtein huggingface_hub quran-transcript quran-muaalem
+          pip install -q "transformers>=5.13,<6" onnx onnxruntime onnxscript soundfile Levenshtein safetensors huggingface_hub numpy
       - name: Export
         run: |
-          set +e
+          set -o pipefail
           python scripts/export_mini.py out 2>&1 | tee export.log
-          rc=${PIPESTATUS[0]}
-          if [ "$rc" != 0 ]; then
-            tail -c 3500 export.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | sed 's/^/::error title=export-log::/'
-            echo
-            exit "$rc"
-          fi
-        shell: bash
+      - name: Erreur lisible sans le journal (annotations)
+        if: failure()
+        run: |
+          tail -n 25 export.log 2>/dev/null | while IFS= read -r l; do echo "::error title=export-mini::$l"; done
+      - name: Rapport (même en cas d'échec)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: export-mini-report
+          path: |
+            out/report.json
+            export.log
+          if-no-files-found: ignore
+      - name: Résumé
+        if: success()
+        run: |
+          python -c "import json;r=json.load(open('out/report.json'));print('::notice title=muaalem-mini::choix '+r['web_variant']+' tailles '+str(r['sizes_mb'])+' accord int8 '+str(r['int8_char_agreement'])+' temps '+str(r['onnx_seconds']))"
       - name: Publier la release mini-v1
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release view mini-v1 >/dev/null 2>&1 || gh release create mini-v1 --title "Modèle muaalem-mini (ONNX)" --notes "Export automatique de sysofwan/hifzguide-muaalem-mini (AGPL-3.0). Voir report.json."
-          gh release upload mini-v1 out/muaalem_mini.int8.onnx out/muaalem_mini_vocab.json out/report.json out/test_pcm.f32 --clobber
+          gh release view mini-v1 >/dev/null 2>&1 || gh release create mini-v1 --title "Modèle muaalem-mini (ONNX)" --notes "Export automatique de sysofwan/hifzguide-muaalem-mini (AGPL-3.0), révision épinglée. Voir report.json."
+          gh release upload mini-v1 out/muaalem_mini.web.onnx out/muaalem_mini_vocab.json out/report.json out/test_pcm.f32 --clobber
       - name: Relancer la publication du site
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: gh workflow run pages.yml || true

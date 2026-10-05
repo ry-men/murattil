@@ -1176,10 +1176,11 @@ async function processQueue() {
 // muaalem-mini sur le téléphone
 // ---------------------------------------------------------------------------
 let mini: Worker | null = null;
+let miniThreads = 1;
 let miniState: "off" | "absent" | "loading" | "ready" | "error" = "off";
 let miniPct = 0;
 let miniId = 0;
-const miniJobs = new Map<number, (r: { analyzed: number[]; errors: TajwidError[] } | null) => void>();
+const miniJobs = new Map<number, (r: { analyzed: number[]; errors: TajwidError[]; ms?: number } | null) => void>();
 
 function startMini() {
   if (mini || loadPrefs().tajwidEngine === "server") return;
@@ -1189,7 +1190,7 @@ function startMini() {
     const m = e.data;
     if (m.type === "absent") { miniState = "absent"; mini?.terminate(); mini = null; onMiniChange(); }
     else if (m.type === "loading") { miniPct = m.percent; if (session.active) tjBar(); }
-    else if (m.type === "ready") { miniState = "ready"; onMiniChange(); }
+    else if (m.type === "ready") { miniState = "ready"; miniThreads = m.threads ?? 1; logEvent({ type: "mini-ready", threads: miniThreads, isolated: self.crossOriginIsolated }); onMiniChange(); }
     else if (m.type === "error") { console.warn("muaalem-mini :", m.message); miniState = "error"; mini?.terminate(); mini = null; onMiniChange(); }
     else if (m.type === "result") {
       const cb = miniJobs.get(m.id);
@@ -1197,7 +1198,7 @@ function startMini() {
       if (m.error) console.warn("muaalem-mini :", m.error);
       logEvent({ type: "mini", ms: m.ms, predicted: m.predicted });
       const ay = (m.ayahs ?? []) as { ayah: number; errors: TajwidError[] }[];
-      cb?.(m.skipped ? null : { analyzed: ay.map((a) => a.ayah), errors: ay.flatMap((a) => a.errors) });
+      cb?.(m.skipped ? null : { analyzed: ay.map((a) => a.ayah), errors: ay.flatMap((a) => a.errors), ms: m.ms });
     }
   };
   mini.onerror = () => { miniState = "error"; mini?.terminate(); mini = null; onMiniChange(); };
@@ -1216,7 +1217,7 @@ function onMiniChange() {
 }
 
 /** Analyse d'une ayah par muaalem-mini (null si le modèle n'est pas prêt). */
-async function sendMini(surah: number, ayah: number, blob: Blob): Promise<{ analyzed: string[]; errors: TajwidError[] } | null> {
+async function sendMini(surah: number, ayah: number, blob: Blob): Promise<{ analyzed: string[]; errors: TajwidError[]; ms?: number } | null> {
   if (!mini || miniState !== "ready") { park(surah, ayah, blob); return null; }
   const buf = await blob.arrayBuffer();
   const pcm16 = new Int16Array(buf, 44);
@@ -1227,7 +1228,7 @@ async function sendMini(surah: number, ayah: number, blob: Blob): Promise<{ anal
   return new Promise((resolve) => {
     miniJobs.set(id, (r) => {
       if (!r) { resolve(null); return; }
-      resolve({ analyzed: r.analyzed.map((a) => `${surah}:${a}`), errors: r.errors });
+      resolve({ analyzed: r.analyzed.map((a) => `${surah}:${a}`), errors: r.errors, ms: r.ms });
     });
     mini!.postMessage({ type: "job", id, samples, surah, from: ayah, to: ayah, words }, [samples.buffer]);
   });
@@ -1295,7 +1296,7 @@ async function showAtelierResult(rec: SessionRecord) {
   }
   if (!errors && miniState === "ready") {
     const r = await sendMini(at.surah, at.ayah, blob);
-    if (r) { errors = r.errors; engine = "muaalem-mini (téléphone)"; covered = r.analyzed.length > 0; }
+    if (r) { errors = r.errors; engine = `muaalem-mini (téléphone, ${((r.ms ?? 0) / 1000).toFixed(1)} s)`; covered = r.analyzed.length > 0; }
   }
   if (!errors) {
     await enqueue({ sessionId: rec.id, surah: at.surah, from: at.ayah, to: at.ayah, wav: blob, createdAt: Date.now() });
@@ -1655,4 +1656,4 @@ void boot().catch((e) => {
 });
 
 // Exposé pour les tests automatisés.
-(window as unknown as { __murattil: unknown }).__murattil = { session, mic, get engineState() { return engineState; }, get miniState() { return miniState; } };
+(window as unknown as { __murattil: unknown }).__murattil = { session, mic, get engineState() { return engineState; }, get miniState() { return miniState; }, get miniThreads() { return miniThreads; } };

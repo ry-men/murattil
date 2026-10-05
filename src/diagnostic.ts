@@ -21,7 +21,7 @@ export async function exportDiagnostic(d: {
   const stamp = new Date(d.record.date).toISOString().slice(0, 16).replace(/[-:T]/g, "");
   const base = `murattil-${stamp}`;
   const meta = {
-    app: "murattil", version: "0.5", userAgentData: (navigator as unknown as { userAgentData?: unknown }).userAgentData ?? null, userAgent: navigator.userAgent, record: d.record,
+    app: "murattil", version: "0.5.2", userAgentData: (navigator as unknown as { userAgentData?: unknown }).userAgentData ?? null, userAgent: navigator.userAgent, record: d.record,
     verdicts: d.verdicts, events: d.log,
   };
   const files = [
