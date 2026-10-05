@@ -31,7 +31,7 @@ def log(*a):
 # 1. Chargement (CTC standard Wav2Vec2-BERT, sinon la classe multi-niveaux de quran-muaalem)
 from transformers import AutoConfig, AutoFeatureExtractor
 
-cfg = AutoConfig.from_pretrained(REPO)
+cfg = AutoConfig.from_pretrained(REPO, trust_remote_code=True)
 log("config :", cfg.architectures, getattr(cfg, "position_embeddings_type", None), getattr(cfg, "vocab_size", None))
 report["architectures"] = cfg.architectures
 model = None
@@ -40,13 +40,13 @@ for loader in ("auto_ctc", "w2v2bert_ctc", "muaalem_multilevel"):
     try:
         if loader == "auto_ctc":
             from transformers import AutoModelForCTC
-            model = AutoModelForCTC.from_pretrained(REPO)
+            model = AutoModelForCTC.from_pretrained(REPO, trust_remote_code=True)
         elif loader == "w2v2bert_ctc":
             from transformers import Wav2Vec2BertForCTC
-            model = Wav2Vec2BertForCTC.from_pretrained(REPO)
+            model = Wav2Vec2BertForCTC.from_pretrained(REPO, trust_remote_code=True)
         else:
             from quran_muaalem.modeling.modeling_multi_level_ctc import Wav2Vec2BertForMultilevelCTC
-            model = Wav2Vec2BertForMultilevelCTC.from_pretrained(REPO)
+            model = Wav2Vec2BertForMultilevelCTC.from_pretrained(REPO, trust_remote_code=True)
         report["loader"] = loader
         break
     except Exception as e:  # noqa: BLE001
@@ -55,7 +55,7 @@ if model is None:
     raise SystemExit("Impossible de charger le modèle :\n" + "\n".join(errors))
 model.eval()
 log("chargé avec", report["loader"], "-", sum(p.numel() for p in model.parameters()) / 1e6, "M paramètres")
-fe = AutoFeatureExtractor.from_pretrained(REPO)
+fe = AutoFeatureExtractor.from_pretrained(REPO, trust_remote_code=True)
 
 
 class Wrapper(torch.nn.Module):
