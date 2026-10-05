@@ -36,7 +36,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           URL=$(grep -o 'https://[A-Za-z0-9._-]*--murattil-tajwid-web[A-Za-z0-9._-]*\.modal\.run' deploy.log | head -1)
-          if [ -z "$URL" ]; then echo "Adresse introuvable dans le journal de déploiement"; exit 1; fi
+          if [ -z "$URL" ]; then
+            echo "Adresse introuvable dans le journal de déploiement"
+            echo "::error title=modal-log::$(grep -iE 'https?://|modal\.run|error|created|deployed' deploy.log | tail -15 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')"
+            exit 1
+          fi
           echo "Serveur : $URL"
           for i in 1 2 3 4 5 6; do curl -fsS -m 120 "$URL/health" && break || sleep 20; done
           printf '{"tajwidUrl": "%s"}\n' "$URL" > public/config.json
