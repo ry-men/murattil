@@ -1,5 +1,5 @@
 // Service worker : l'app fonctionne hors ligne après la première visite.
-const CACHE = "murattil-v11";
+const CACHE = "murattil-v12";
 const CORE = ["./", "./index.html", "./config.json", "./quran.json", "./zipformer_quran.json", "./models/zipformer_a0w_ep1_a05.io.json", "./audio-processor.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (e) => {

@@ -1,7 +1,15 @@
 import { loadPrefs, type Severity } from "./store";
 
 /** Sévérité du serveur : écart de confiance minimal (log) pour garder une faute. Calibré sur des récitateurs pros. */
-export const SEVERITY_DELTA: Record<Severity, number> = { souple: 8, normal: 4, strict: 1 };
+export const SEVERITY_DELTA: Record<Severity, number> = { souple: 12, normal: 8, strict: 5 };
+/** Même filtre pour muaalem-mini (téléphone), plus bruité : seuil plus haut (calibré sur 663 ayahs de 34 pros). */
+export const MINI_DELTA: Record<Severity, number> = { souple: 20, normal: 16, strict: 12 };
+/** Familles bruitées : supplément de seuil (comme EXTRA_DELTA dans server/analysis.py). */
+export const EXTRA_DELTA: Record<string, number> = { bord: 8, voyelle: 6, madd_long: 8 };
+export function miniConfident(e: TajwidError): boolean {
+  if (typeof e.confidence !== "number") return false;
+  return e.confidence >= (MINI_DELTA[loadPrefs().tjSeverity] ?? MINI_DELTA.normal) + (EXTRA_DELTA[e.noise ?? ""] ?? 0);
+}
 function minDelta(): string { return String(SEVERITY_DELTA[loadPrefs().tjSeverity] ?? SEVERITY_DELTA.normal); }
 
 // Analyse tajwid fine via le serveur Quran Muaalem (facultatif, après la séance).
@@ -13,6 +21,17 @@ export interface TajwidError {
   category: "harf" | "haraka" | "tajwid" | "mot" | "sifa";
   message: string;
   rule_ar?: string;
+  confidence?: number | null; // serveur : écart de confiance (log), plus grand = plus sûr
+  noise?: string; // serveur : famille de bruit connue du modèle
+}
+
+/** Faute telle que gardée dans l'historique (avec le retour « pas une faute » de l'utilisateur). */
+export function tjRec(e: TajwidError) {
+  const r: { surah: number; ayah: number; word: number; word_text: string; category: string; message: string; confidence?: number; noise?: string } =
+    { surah: e.surah, ayah: e.ayah, word: e.word, word_text: e.word_text, category: e.category, message: e.message };
+  if (typeof e.confidence === "number") r.confidence = e.confidence;
+  if (e.noise) r.noise = e.noise;
+  return r;
 }
 
 export interface Segment { t0: number; t1: number; surah: number; from: number; to: number }

@@ -49,18 +49,29 @@ Réponse : par ayah, la liste des erreurs `{word, word_text, category: harf|hara
 
 ## Calibration
 
-Mesurée sur 126 ayahs de 7 récitateurs pros (toute faute signalée y est fausse), API complète, une ayah par requête :
+Mesurée sur **663 ayahs de 34 récitateurs pros** (tarteel-ai/everyayah, split test ; toute faute signalée y est fausse),
+une ayah par requête, et sur 60 ayahs de Ryan (téléphone) :
 
-| Réglage | Fausses fautes / ayah (pros) | Points / ayah (Ryan) |
+| Réglage (`min_delta`) | Fausses fautes / ayah (pros) | Points / ayah (Ryan) |
 |---|---|---|
-| Sans aucun filtre | 0,55 | 4 |
-| Souple (`min_delta=8`) | 0,05 | 1,65 |
-| Normal (`min_delta=4`, défaut) | 0,08 | 2,08 |
-| Strict (`min_delta=1`) | 0,17 | 2,57 |
-| Sifat (Atelier), avant / après `SIFA_RULES` | 0,84 / 0,02 | |
+| Sans filtre | 0,55 | 4 |
+| Souple (12) | 0,07 (1 toutes les 14) | 1,27 |
+| **Normal (8, défaut)** | **0,10 (1 toutes les 10)** | **1,55** |
+| Strict (5) | 0,16 (1 toutes les 6) | 1,83 |
+| Sifat (Atelier), toutes / `SIFA_RULES` | 1,35 / 0,05 | 15,8 / 0,67 |
 
-Filtre de confiance : pour chaque faute, delta = log P(version fautive) - log P(version correcte) (CTC).
-Familles bruitées (`EXTRA_DELTA`) : seuil plus haut. Rejouer : `python tests/llr_eval.py pros` (modèle sur CPU).
+Filtre de confiance : pour chaque faute, delta = log P(version fautive) - log P(version correcte) (CTC sur le segment).
+Familles bruitées (`EXTRA_DELTA`) : seuil plus haut (bord +8, voyelle avalée +6, madd naturel trop long +8).
+Rejouer : `python tests/pros_report.py` (sans GPU, données dans `tests/data/`) ; remesurer : `python tests/pros_eval.py pros`.
+
+Note : sur les 7 premiers récitateurs seulement, on mesurait 0,08 ; l'élargissement à 34 a montré que c'était optimiste.
+
+## Démarrage rapide (instantané mémoire Modal)
+
+`modal_app.py` charge le modèle sur CPU une fois (`@modal.enter(snap=True)`), Modal garde cette mémoire, et chaque
+démarrage la restaure puis passe le modèle sur le GPU (`snap=False`). Même adresse qu'avant (`label`).
+Pas encore vérifié en production : si le serveur ne répond plus après le déploiement, revenir à la version
+précédente de `modal_app.py` (fonction simple, sans instantané).
 
 ## Tests (sans modèle)
 

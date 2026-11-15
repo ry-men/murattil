@@ -1,5 +1,6 @@
 // Export du diagnostic : l'audio de la séance (WAV 16 kHz) + le journal du moteur (JSON).
 import type { SessionRecord } from "./store";
+import { APP_VERSION } from "./version";
 
 function wav(chunks: Int16Array[]): Blob {
   const n = chunks.reduce((s, c) => s + c.length, 0);
@@ -21,7 +22,7 @@ export async function exportDiagnostic(d: {
   const stamp = new Date(d.record.date).toISOString().slice(0, 16).replace(/[-:T]/g, "");
   const base = `murattil-${stamp}`;
   const meta = {
-    app: "murattil", version: "0.6.5", userAgentData: (navigator as unknown as { userAgentData?: unknown }).userAgentData ?? null, userAgent: navigator.userAgent, record: d.record,
+    app: "murattil", version: APP_VERSION, userAgentData: (navigator as unknown as { userAgentData?: unknown }).userAgentData ?? null, userAgent: navigator.userAgent, record: d.record,
     verdicts: d.verdicts, events: d.log,
   };
   const files = [

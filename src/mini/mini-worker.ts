@@ -4,7 +4,7 @@
 import * as ort from "onnxruntime-web/wasm";
 import { loadModelParts, isModelCached, dropOtherModels } from "../model-cache";
 import { extractFeatures } from "./features";
-import { analyzeSegment, type RefData } from "./explain";
+import { analyzeSegment, addConfidence, ctcLogLik, type RefData } from "./explain";
 
 export type ToMini =
   | { type: "init"; base: string }
@@ -50,10 +50,10 @@ async function init(base: string) {
   }
 }
 
-/** Audio -> phonèmes (décodage CTC glouton, blanc = 0). */
-export async function phonemes(s: ort.InferenceSession, voc: Record<number, string>, pcm: Float32Array): Promise<string> {
+/** Audio -> phonèmes (décodage CTC glouton, blanc = 0) + log-probabilités pour le filtre de confiance. */
+export async function phonemes(s: ort.InferenceSession, voc: Record<number, string>, pcm: Float32Array): Promise<{ text: string; lp: Float32Array; T: number; V: number }> {
   const { data, frames } = extractFeatures(pcm);
-  if (!frames) return "";
+  if (!frames) return { text: "", lp: new Float32Array(0), T: 0, V: 0 };
   const mask = new BigInt64Array(frames).fill(1n);
   const out = await s.run({
     input_features: new ort.Tensor("float32", data, [1, frames, 160]),
@@ -62,14 +62,19 @@ export async function phonemes(s: ort.InferenceSession, voc: Record<number, stri
   const o = out[s.outputNames[0]];
   const [, T, V] = o.dims as number[];
   const d = o.data as Float32Array;
-  let prev = 0, txt = "";
+  const lp = new Float32Array(T * V);
+  let prev = 0, text = "";
   for (let t = 0; t < T; t++) {
-    let b = 0;
-    for (let k = 1; k < V; k++) if (d[t * V + k] > d[t * V + b]) b = k;
-    if (b !== 0 && b !== prev) txt += voc[b] ?? "";
+    let b = 0, mx = -Infinity;
+    for (let k = 0; k < V; k++) { const x = d[t * V + k]; if (x > mx) mx = x; if (k && x > d[t * V + b]) b = k; }
+    let sum = 0;
+    for (let k = 0; k < V; k++) sum += Math.exp(d[t * V + k] - mx);
+    const lz = mx + Math.log(sum);
+    for (let k = 0; k < V; k++) lp[t * V + k] = d[t * V + k] - lz;
+    if (b !== 0 && b !== prev) text += voc[b] ?? "";
     prev = b;
   }
-  return txt;
+  return { text, lp, T, V };
 }
 
 let queue = Promise.resolve();
@@ -79,8 +84,11 @@ self.onmessage = (e: MessageEvent<ToMini>) => {
     if (msg.type === "init") return init(msg.base);
     if (!session || !ref) { post({ type: "result", id: msg.id, skipped: true, ayahs: [] }); return; }
     const t0 = performance.now();
-    const pred = await phonemes(session, vocab, msg.samples);
+    const { text: pred, lp, T, V } = await phonemes(session, vocab, msg.samples);
     const ayahs = analyzeSegment(ref, pred, msg.surah, msg.from, msg.to, (a) => msg.words[a] ?? []);
+    const ids: Record<string, number> = {};
+    for (const [k, c] of Object.entries(vocab)) if (Number(k) !== 0) ids[c] = Number(k);
+    addConfidence(ayahs, pred, (txt) => ctcLogLik(lp, T, V, [...txt].map((c) => ids[c]).filter((x) => x !== undefined)));
     post({ type: "result", id: msg.id, ayahs, predicted: pred, ms: Math.round(performance.now() - t0) });
   }).catch((err) => post({ type: "result", id: (msg as { id?: number }).id ?? -1, ayahs: [], error: String(err) }));
 };

@@ -32,10 +32,26 @@ image = (
 app = modal.App("murattil-tajwid", image=image)
 
 
-@app.function(gpu="T4", scaledown_window=120, timeout=600, max_containers=1)
+# Instantané mémoire : le modèle est chargé une fois sur CPU, Modal garde la mémoire du conteneur,
+# puis chaque démarrage restaure cet instantané et passe le modèle sur le GPU (quelques secondes au lieu de ~40 s).
+# Pendant l'instantané, aucun appel CUDA (Muaalem(device="cpu")) : sinon CUDA croit qu'il n'y a pas de GPU.
+@app.cls(gpu="T4", scaledown_window=120, timeout=600, max_containers=1, enable_memory_snapshot=True)
 @modal.concurrent(max_inputs=8)
-@modal.asgi_app()
-def web():
-    import app as server
-    server.model()  # charge le modèle tout de suite (requêtes suivantes rapides)
-    return server.app
+class Tajwid:
+    @modal.enter(snap=True)
+    def load(self):
+        import app as server
+        from model import Muaalem
+        server._model = Muaalem(device="cpu")
+
+    @modal.enter(snap=False)
+    def to_gpu(self):
+        import torch
+        import app as server
+        if torch.cuda.is_available():
+            server._model.to_device("cuda")
+
+    @modal.asgi_app(label="murattil-tajwid-web")  # même adresse qu'avant : https://<compte>--murattil-tajwid-web.modal.run
+    def web(self):
+        import app as server
+        return server.app
