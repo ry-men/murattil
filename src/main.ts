@@ -6,9 +6,9 @@ import { isModelCached } from "./model-cache";
 import { loadQuran, getSurah, ayahWords, hasBismillahPrefix, arNum, type Surah } from "./quran";
 import { loadTajweedColors, tajweedReady, colorize, legend } from "./tajweed-colors";
 import { initInstall, watchUpdates, shortcutTarget } from "./pwa";
-import { loadHistory, saveSession, updateSession, clearHistory, loadPrefs, savePrefs, setDefaultServer, getDefaultServer, customServer, type Mistake, type SessionRecord, type MissedWord, type Severity } from "./store";
+import { loadHistory, saveSession, updateSession, clearHistory, loadPrefs, savePrefs, setDefaultServer, getDefaultServer, customServer, type Mistake, type SessionRecord, type MissedWord, type Severity, type TajwidRec } from "./store";
 import { exportDiagnostic } from "./diagnostic";
-import { buildSegments, analyzeSession, checkServer, segmentForAyah, analyzeOne, wav, type TajwidError } from "./tajwid";
+import { buildSegments, analyzeSession, checkServer, segmentForAyah, analyzeOne, wav, tjRec, miniConfident, type TajwidError } from "./tajwid";
 import { enqueue, pending as pendingSegments, remove as removeSegment, countFor } from "./queue";
 import { units, unitStatus, dueToday, streakDays, minutesThisWeek, weakPoints, surahAccuracy, pickTestQuestion, type UnitStatus } from "./memo";
 
@@ -372,7 +372,7 @@ async function endSession() {
     missed: stats.missed,
   };
   if (session.test) rec.mode = "test";
-  if (session.tjAnalyzed.size) rec.tajwid = [...session.tjErrors.values()].flat().map((e) => ({ surah: e.surah, ayah: e.ayah, word: e.word, word_text: e.word_text, category: e.category, message: e.message }));
+  if (session.tjAnalyzed.size) rec.tajwid = [...session.tjErrors.values()].flat().map(tjRec);
   lastDiag = { audio: session.audio, log: session.log, record: rec, verdicts: [...session.verdicts], ayahAt: [...session.ayahAt] };
   if (duration > 8 || rec.ayahs.length) saveSession(rec);
   session.recId = rec.id;
@@ -608,6 +608,18 @@ const verifyDone = new Map<string, Promise<void>>();
 /** Le modèle mini se trompe trop souvent seul (testé sur des récitateurs professionnels : ~1 fausse faute
  *  par ayah). On ne garde que les fautes de lettres / mots oubliés que le 2e modèle (FastConformer)
  *  confirme : il doit lui aussi entendre ce mot autrement (ou pas du tout). Harakat et madd du mini : ignorés. */
+/**
+ * Fautes du mini gardées : seulement celles dont le modèle est sûr (filtre de confiance, seuil MINI_DELTA),
+ * et pour les lettres / mots oubliés, confirmées en plus par FastConformer.
+ * Calibrage (663 ayahs, 34 pros, seuil normal 16) : ~0,04 fausse faute / ayah avant FastConformer (0,5 sans ce filtre).
+ */
+async function filterMini(surah: number, ayah: number, errors: TajwidError[], endAt?: number): Promise<TajwidError[]> {
+  const hardCat = (e: TajwidError) => e.category === "harf" || e.category === "mot";
+  const soft = errors.filter((e) => !hardCat(e) && miniConfident(e));
+  const hard = await corroborate(surah, ayah, errors.filter((e) => hardCat(e) && (e.category === "mot" || miniConfident(e))), endAt);
+  return [...hard, ...soft].sort((a, b) => a.word - b.word);
+}
+
 async function corroborate(surah: number, ayah: number, errors: TajwidError[], endAt?: number): Promise<TajwidError[]> {
   const hard = errors.filter((e) => e.category === "harf" || e.category === "mot");
   if (!hard.length || !verifier) return [];
@@ -908,17 +920,42 @@ function renderSummary(r: SessionRecord) {
 // ---------------------------------------------------------------------------
 const CAT_FR: Record<string, string> = { harf: "lettre", haraka: "haraka", tajwid: "tajwid", mot: "mot oublié", sifa: "qualité de lettre" };
 
-function renderTajwidList(errors: TajwidError[] | SessionRecord["tajwid"]) {
+function renderTajwidList(errors: TajwidRec[] | undefined, recId?: string) {
   const list = $("tajwid-list");
   list.replaceChildren();
-  for (const e of errors ?? []) {
-    const li = document.createElement("li");
-    li.innerHTML = `<span class="m-ref"></span><span class="m-word" lang="ar" dir="rtl"></span><span class="m-kind t-msg"></span>`;
-    li.querySelector(".m-ref")!.textContent = `${e.surah}:${e.ayah}`;
-    li.querySelector(".m-word")!.textContent = e.word_text;
-    li.querySelector(".m-kind")!.textContent = `${CAT_FR[e.category] ?? e.category} · ${e.message}`;
-    list.append(li);
+  (errors ?? []).forEach((e, i) => list.append(tajwidItem(e, `${e.surah}:${e.ayah}`, recId, i)));
+}
+
+/** Ligne d'une faute + bouton « Pas une faute » (retour gardé dans l'historique et le diagnostic). */
+function tajwidItem(e: TajwidRec, label: string, recId: string | undefined, idx: number): HTMLLIElement {
+  const li = document.createElement("li");
+  li.innerHTML = `<span class="m-ref"></span><span class="m-word" lang="ar" dir="rtl"></span><span class="m-kind t-msg"></span>`;
+  li.querySelector(".m-ref")!.textContent = label;
+  li.querySelector(".m-word")!.textContent = e.word_text;
+  li.querySelector(".m-kind")!.textContent = `${CAT_FR[e.category] ?? e.category} · ${e.message}`;
+  if (recId) {
+    const b = document.createElement("button");
+    b.className = "link fp-btn";
+    const paint = (fp: boolean) => { li.classList.toggle("fp", fp); b.textContent = fp ? "Annuler" : "Pas une faute"; };
+    paint(!!e.fp);
+    b.addEventListener("click", () => {
+      e.fp = !e.fp;
+      paint(e.fp);
+      setFeedback(recId, idx, e.fp);
+      toast(e.fp ? "Noté : pas une faute. Merci, ça sert à régler la détection." : "Annulé.");
+    });
+    li.append(b);
   }
+  return li;
+}
+
+function setFeedback(recId: string, idx: number, fp: boolean) {
+  const rec = loadHistory().find((r) => r.id === recId);
+  if (rec?.tajwid?.[idx]) {
+    rec.tajwid[idx].fp = fp || undefined;
+    updateSession(recId, { tajwid: rec.tajwid });
+  }
+  for (const r of [lastRecord, lastDiag?.record]) if (r?.id === recId && r.tajwid?.[idx]) r.tajwid[idx].fp = fp || undefined;
 }
 
 function renderTajwidBox(r: SessionRecord) {
@@ -927,7 +964,7 @@ function renderTajwidBox(r: SessionRecord) {
   const btn = $<HTMLButtonElement>("btn-tajwid");
   btn.disabled = false;
   btn.textContent = "Lancer l'analyse tajwid";
-  renderTajwidList(r.tajwid);
+  renderTajwidList(r.tajwid, r.id);
   void countFor(r.id).then((n) => {
     if (!n || lastRecord?.id !== r.id) return;
     info.textContent = (r.tajwid?.length ? `${r.tajwid.length} point(s) à revoir. ` : "") + `${n} ayah${n > 1 ? "s" : ""} en attente : analysée${n > 1 ? "s" : ""} automatiquement dès que tu seras en ligne.`;
@@ -964,7 +1001,7 @@ async function runTajwid() {
   const segs = buildSegments(d.audio, d.ayahAt);
   if (!segs.length) { toast("Rien à analyser dans cette séance."); btn.disabled = false; return; }
   const res = await analyzeSession(url, d.audio, segs, (k, n) => { btn.textContent = `Analyse… ${k}/${n}`; });
-  d.record.tajwid = res.errors.map((e) => ({ surah: e.surah, ayah: e.ayah, word: e.word, word_text: e.word_text, category: e.category, message: e.message }));
+  d.record.tajwid = res.errors.map(tjRec);
   updateSession(d.record.id, { tajwid: d.record.tajwid });
   if (res.failed) toast(`${res.failed} segment${res.failed > 1 ? "s" : ""} non analysé${res.failed > 1 ? "s" : ""} (serveur).`, 4000);
   renderTajwidBox(d.record);
@@ -1120,7 +1157,7 @@ function park(surah: number, ayah: number, blob: Blob) {
 }
 
 function sendTajwid(surah: number, ayah: number, blob: Blob): Promise<void> {
-  if (session.tjEngine === "mini") return sendMini(surah, ayah, blob).then(async (r) => { if (r) applyTajwid(r.analyzed, await corroborate(surah, ayah, r.errors)); });
+  if (session.tjEngine === "mini") return sendMini(surah, ayah, blob).then(async (r) => { if (r) applyTajwid(r.analyzed, await filterMini(surah, ayah, r.errors)); });
   const url = loadPrefs().tajwidUrl;
   const job = tjChain.then(async () => {
     if (session.tjLive === "checking") await tjCheck;
@@ -1131,7 +1168,7 @@ function sendTajwid(surah: number, ayah: number, blob: Blob): Promise<void> {
       if (!session.active && session.recId && res.errors.length) {
         // Résultat arrivé après l'enregistrement de la séance : on complète l'historique.
         const rec = loadHistory().find((r) => r.id === session.recId);
-        const add = res.errors.map((e) => ({ surah: e.surah, ayah: e.ayah, word: e.word, word_text: e.word_text, category: e.category, message: e.message }));
+        const add = res.errors.map(tjRec);
         if (rec) updateSession(rec.id, { tajwid: [...(rec.tajwid ?? []), ...add] });
       }
     } catch {
@@ -1193,7 +1230,7 @@ async function processQueue() {
         const res = await analyzeOne(url, it.wav, it.surah, it.from, it.to, 60000);
         const rec = loadHistory().find((r) => r.id === it.sessionId);
         if (rec) {
-          const add = res.errors.map((e) => ({ surah: e.surah, ayah: e.ayah, word: e.word, word_text: e.word_text, category: e.category, message: e.message }));
+          const add = res.errors.map(tjRec);
           updateSession(rec.id, { tajwid: [...(rec.tajwid ?? []), ...add] });
           if (lastRecord?.id === rec.id) { lastRecord.tajwid = [...(lastRecord.tajwid ?? []), ...add]; }
         }
@@ -1339,8 +1376,8 @@ async function showAtelierResult(rec: SessionRecord) {
   if (!errors && miniState === "ready") {
     const r = await sendMini(at.surah, at.ayah, blob);
     if (r) {
-      errors = await corroborate(at.surah, at.ayah, r.errors, session.audioLen / 16000);
-      engine = `muaalem-mini (téléphone, ${((r.ms ?? 0) / 1000).toFixed(1)} s ; lettres seulement, confirmées par un 2e modèle)`;
+      errors = await filterMini(at.surah, at.ayah, r.errors, session.audioLen / 16000);
+      engine = `muaalem-mini (téléphone, ${((r.ms ?? 0) / 1000).toFixed(1)} s ; fautes sûres seulement ; lettres confirmées par un 2e modèle)`;
       covered = r.analyzed.length > 0;
     }
   }
@@ -1353,7 +1390,7 @@ async function showAtelierResult(rec: SessionRecord) {
     $("at-status").textContent = `Je n'ai pas reconnu assez de l'ayah pour juger (${engine}). Recommence plus près du micro, sans bruit autour.`;
     return;
   }
-  const list = errors.map((e) => ({ surah: e.surah, ayah: e.ayah, word: e.word, word_text: e.word_text, category: e.category, message: e.message }));
+  const list = errors.map(tjRec);
   updateSession(rec.id, { tajwid: list });
   const bad = new Set(errors.map((e) => e.word));
   const score = Math.round((100 * (words.length - bad.size)) / words.length);
@@ -1362,14 +1399,7 @@ async function showAtelierResult(rec: SessionRecord) {
   $("at-status").textContent = errors.length ? `${errors.length} point${errors.length > 1 ? "s" : ""} à travailler · analyse : ${engine}` : `Aucune faute détectée. Bārak Allāhu fīk. · analyse : ${engine}`;
   for (const e of errors) verse.querySelector(`.w[data-w="${e.word}"]`)?.classList.add("tj", `tj-${e.category}`);
   const ul = $("at-list");
-  for (const e of errors) {
-    const li = document.createElement("li");
-    li.innerHTML = `<span class="m-ref"></span><span class="m-word" lang="ar" dir="rtl"></span><span class="m-kind t-msg"></span>`;
-    li.querySelector(".m-ref")!.textContent = CAT_FR[e.category] ?? e.category;
-    li.querySelector(".m-word")!.textContent = e.word_text;
-    li.querySelector(".m-kind")!.textContent = e.message;
-    ul.append(li);
-  }
+  list.forEach((e, i) => ul.append(tajwidItem(e, CAT_FR[e.category] ?? e.category, rec.id, i)));
 }
 
 // ---------------------------------------------------------------------------
@@ -1711,4 +1741,4 @@ void boot().catch((e) => {
 });
 
 // Exposé pour les tests automatisés.
-(window as unknown as { __murattil: unknown }).__murattil = { session, mic, get engineState() { return engineState; }, get miniState() { return miniState; }, get miniThreads() { return miniThreads; } };
+(window as unknown as { __murattil: unknown }).__murattil = { session, mic, showRecord: (r: SessionRecord) => { lastRecord = r; renderSummary(r); show("summary"); }, get engineState() { return engineState; }, get miniState() { return miniState; }, get miniThreads() { return miniThreads; } };

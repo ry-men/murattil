@@ -205,6 +205,8 @@ body[data-screen="atelier"] #s-atelier { display: flex; }
 .mistakes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .mistakes li { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
 .mistakes li.empty { display: block; color: var(--muted); text-align: center; padding: 14px; }
+.mistakes li .fp-btn { grid-column: 1 / -1; justify-self: end; font-size: 12.5px; padding: 2px 0; }
+.mistakes li.fp .m-kind, .mistakes li.fp .m-word { text-decoration: line-through; opacity: .55; }
 .m-ref { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 13px; }
 .m-word { font-family: "Amiri Quran", serif; font-size: 24px; text-align: center; }
 .m-kind { font-size: 12.5px; font-weight: 600; color: var(--bad); }

@@ -2,6 +2,9 @@
 export interface Mistake { surah: number; ayah: number; word: number; kind: string; text: string; corrected: boolean }
 /** Mot non validé par le moteur : "miss" non reconnu, "bad" probablement faux. */
 export interface MissedWord { surah: number; ayah: number; word: number; text: string; kind: "miss" | "bad" }
+/** Faute de tajwid gardée ; fp = l'utilisateur a indiqué « pas une faute » (sert au calibrage). */
+export interface TajwidRec { surah: number; ayah: number; word: number; word_text: string; category: string; message: string; confidence?: number; noise?: string; fp?: boolean }
+
 export interface SessionRecord {
   id: string;
   date: string;
@@ -16,7 +19,7 @@ export interface SessionRecord {
   validated?: number;
   total?: number;
   missed?: MissedWord[];
-  tajwid?: { surah: number; ayah: number; word: number; word_text: string; category: string; message: string }[];
+  tajwid?: TajwidRec[];
 }
 
 const KEY = "murattil.history.v1";

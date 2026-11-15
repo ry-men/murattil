@@ -152,7 +152,7 @@ def _describe(err, word_text: str) -> tuple[str, str, str, str]:
 # avec un seuil plus haut pour les familles bruitées (EXTRA_DELTA). Mesuré oct. 2026 sur 126 ayahs de pros :
 # avec ces réglages, chadda / confusion / voyelle / bord n'ajoutent presque aucune fausse faute (tests/llr_eval.py).
 FILTERS = {"bord": False, "ghunna1": True, "chadda": False, "voyelle": False, "confusion": False, "reprise": True}
-EXTRA_DELTA = {"bord": 8.0, "voyelle": 4.0}
+EXTRA_DELTA = {"bord": 8.0, "voyelle": 6.0, "madd_long": 8.0}
 # Confusions de lettres du modèle (fréquentes chez les pros, rares comme vraie faute).
 MODEL_CONFUSIONS = {("ط", "ق")}
 _VOWELS = re.compile("[\u064B-\u0652]")
@@ -371,6 +371,8 @@ def analyze_segment(
                     cat, msg = "haraka", (f"Chadda oubliée sur « {eu[0]} »" if len(gu) < len(eu) else f"Chadda en trop sur « {eu[0]} »")
                 elif fam == "voyelle":
                     cat, msg = "haraka", "Voyelle brève (haraka) non prononcée"
+                if not fam and msg.startswith("Madd naturel (2 temps) : trop long"):
+                    fam = "madd_long"  # souvent mesuré trop long chez les pros (style, arrêt) : seuil plus haut
                 res.errors.append(WordError(w, words[w], cat, msg, err.expected_ph or "", err.preditected_ph or "", rar, rfr, tuple(err.ph_pos), err.expected_len, err.predicted_len, noise=fam or ""))
             res.errors = _merge_word_omissions(res.errors, words)
             res.errors = _merge_word_omissions(res.errors, words)
@@ -380,8 +382,9 @@ def analyze_segment(
 
 
 # Rapport de vraisemblance (log) minimal pour garder une faute : calibré sur 126 ayahs de pros
-# Seuil par défaut (réglage « normal » de l'app) : 0,08 fausse faute par ayah chez les pros (tests/llr_eval.py).
-MIN_DELTA = 4.0
+# Réglage « normal » de l'app, mesuré sur 663 ayahs de 34 récitateurs (tests/pros_eval.py + pros_report.py) :
+# 0,10 fausse faute par ayah chez les pros (souple, 12 : 0,07 ; strict, 5 : 0,16).
+MIN_DELTA = 8.0
 
 
 def confidence_filter(results: list[AyahResult], predicted: str, loglik, min_delta: float = MIN_DELTA) -> None:

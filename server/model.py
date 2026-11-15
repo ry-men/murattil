@@ -1,6 +1,7 @@
 """Chargement de Quran Muaalem (Wav2Vec2-BERT, multi-level CTC) et transcription en phonèmes."""
 from __future__ import annotations
 
+import math
 import os
 import numpy as np
 import torch
@@ -14,19 +15,28 @@ MAX_SECONDS = 15.0
 
 
 class Muaalem:
-    def __init__(self, name: str = MODEL):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        # GPU : bfloat16 (entraînement d'origine) si supporté, sinon float16 (ex. T4) ; CPU : float32.
-        if self.device == "cuda":
-            self.dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
-        else:
-            self.dtype = torch.float32
+    def __init__(self, name: str = MODEL, device: str | None = None):
+        # device="cpu" : pas d'appel CUDA (instantané mémoire Modal, où le GPU est absent pendant le chargement).
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = self._dtype(self.device)
         torch.set_num_threads(max(1, os.cpu_count() or 1))
         self.processor = AutoFeatureExtractor.from_pretrained(name)
         self.tokenizer = MultiLevelTokenizer(name)
         self.model = Wav2Vec2BertForMultilevelCTC.from_pretrained(name).to(self.device, dtype=self.dtype).eval()
         self.vocab = self.tokenizer.id_to_vocab["phonemes"]
         self.ids = {c: int(i) for i, c in self.vocab.items() if int(i) != 0}
+
+    @staticmethod
+    def _dtype(device: str):
+        # GPU : bfloat16 (entraînement d'origine) si supporté, sinon float16 (ex. T4) ; CPU : float32.
+        if device == "cuda":
+            return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        return torch.float32
+
+    def to_device(self, device: str) -> None:
+        """Déplace le modèle déjà chargé (ex. CPU -> GPU après restauration de l'instantané)."""
+        self.device, self.dtype = device, self._dtype(device)
+        self.model = self.model.to(device, dtype=self.dtype).eval()
 
     @torch.inference_mode()
     def analyze(self, wave: np.ndarray, ref_out):
@@ -74,9 +84,9 @@ class Muaalem:
         if not ids or len(ids) > lp.shape[0]:
             return -1e9
         tgt = torch.tensor(ids)
-        loss = torch.nn.functional.ctc_loss(lp.unsqueeze(1), tgt.unsqueeze(0), torch.tensor([lp.shape[0]]), torch.tensor([len(ids)]),
-                                            blank=0, reduction="sum", zero_infinity=True)
-        return -float(loss)
+        loss = float(torch.nn.functional.ctc_loss(lp.unsqueeze(1), tgt.unsqueeze(0), torch.tensor([lp.shape[0]]), torch.tensor([len(ids)]),
+                                                  blank=0, reduction="sum", zero_infinity=False))
+        return -loss if math.isfinite(loss) else -1e9  # alignement impossible (texte trop long pour l'audio)
 
     def phonemes(self, wave: np.ndarray) -> str:
         """Phonèmes (rasm phonétique de quran-transcript)."""
