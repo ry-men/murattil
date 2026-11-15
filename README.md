@@ -26,6 +26,17 @@ La reconnaissance vocale tourne **sur le téléphone**, sans serveur. Pas de cou
 - **Affichage** : caché, premières lettres, ou visible. Régularité (jours d'affilée, minutes de la semaine).
 - **Robustesse** : modèle en cache (IndexedDB), app en cache (service worker), écran maintenu allumé, micro relancé tout seul après une coupure (appel, casque, mise en veille).
 
+## Nouveautés v0.8
+
+- **Apprendre un passage** : ayah par ayah. Écouter le récitateur (1 à 7 fois), réciter avec le texte, réciter de mémoire, enchaîner avec les ayahs précédentes. Une étape est validée à 90 % des mots, sans indice. Le passage appris entre dans la révision du jour.
+- **Progression** : objectif du jour (minutes), jours d'affilée, part du Coran mémorisée ayah par ayah, une case par juz, activité des 12 dernières semaines.
+- **Sauvegarde** : tout l'historique et les réglages dans un fichier, restauration par fusion.
+- **Réécoute dans le bilan** : pour chaque ayah à revoir, « Ma voix » (audio de la séance) et « Récitateur » (EveryAyah, en ligne).
+- **Calibrage personnel** : les retours « Pas une faute » assouplissent la règle concernée (voir `src/calib.ts`). Désactivable dans les réglages de détection.
+- **Révision plus juste** : une séance texte visible ou avec indices ne fait plus avancer l'intervalle. Les fautes marquées « pas une faute » ne comptent plus.
+- **Réglages** : taille du texte ; réglages techniques regroupés.
+- **Tests** : `npx tsx tests/memo.ts` (12 tests), workflow `tests.yml` à chaque push.
+
 ## Lancer en local
 
 ```sh

@@ -61,7 +61,25 @@ Dépôt : `ry-men/murattil` (public). Site : GitHub Pages (workflow `pages.yml`)
   L'écran de séance ne réveille plus le serveur quand le mini fait le tajwid en direct ; extinction après 2 min (au lieu de 5).
   Évaluation complète du 5 oct. (5 audios + 126 ayahs de pros) : moins de 2 min de GPU.
 
+## v0.8.0 (15 nov. 2026) : expérience hifz, sans GPU
+- Branche `claude/v0.8-best-in-class` (contient aussi v0.7.0, qui n'était pas encore dans le dépôt).
+- Mode **Apprendre** (`session.learn` dans `src/main.ts`) : écouter -> lire -> de mémoire -> enchaîner. Fin automatique de l'étape
+  quand la dernière ayah est complète (`session.autoEnd`). Passage appris : `prefs.learning` (fusion par `mergePassage`),
+  ajouté aux unités de révision dans `memoStatuses()`. Sourate couverte en entier : passe dans `prefs.memorized`.
+- **Progression** (`renderStats`, fonctions pures dans `src/memo.ts` : `juzProgress`, `activityGrid`, `minutesToday`). Objectif : `prefs.dailyGoalMin`.
+- **Sauvegarde** : `src/backup.ts` + `exportData` / `importData` dans `src/store.ts`.
+- **Calibrage personnel** : `src/calib.ts`. Règle assouplie si >= 3 retours « pas une faute » et >= 50 % des cas ; on masque alors les fautes
+  dont la confiance <= la plus sûre des fausses fautes marquées. Même mot marqué 2 fois : masqué. Mots oubliés : jamais masqués par règle.
+  Appliqué par `personal()` (direct, bilan, file d'attente, Atelier). Réglage `prefs.personalCalib`.
+- **Révision** : `fromMemory()` : texte visible ou indices (> 3 % des mots) = pas de progression d'intervalle. `SessionRecord.display` ajouté.
+- **Bilan** : `playRow()` : « Ma voix » (segment de l'audio de la séance) et « Récitateur » (`prefs.qari`, repli Alafasy).
+- Version : `src/version.ts`. Cache du service worker : `murattil-v12`.
+- Non vérifié ici (domaine bloqué dans la sandbox) : lecture réelle des MP3 everyayah.com, dossiers Husary / Minshawy / Abdul_Basit.
+  En cas d'échec, l'app retombe sur Alafasy (déjà utilisé par l'Atelier).
+- Pas touché : moteur de suivi, modèles, serveur Modal. Chuchotement : à mesurer avec des enregistrements de Ryan (bouton diagnostic).
+
 ## Tests utiles
+- `npx tsx tests/memo.ts` : révision espacée, juz, calibrage, activité (12 tests, sans modèle). CI : `.github/workflows/tests.yml`.
 - `node tests/e2e.mjs <wav> hifz <s> <de> <à>` (serveur `npx vite preview --port 4173`), `tests/atelier.mjs`, `tests/queue.mjs`, `tests/offline.mjs`.
 - `python tests/mini_eval.py <wav> <s> <de> <à> [--tau -6] [--v]` : fautes du mini sur un enregistrement complet.
 - `python tests/server_eval.py --url <serveur> <audios>` : fautes du gros modèle sur des enregistrements complets (une ayah à la fois).

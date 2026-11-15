@@ -10,7 +10,10 @@ import { loadHistory, saveSession, updateSession, clearHistory, loadPrefs, saveP
 import { exportDiagnostic } from "./diagnostic";
 import { buildSegments, analyzeSession, checkServer, segmentForAyah, analyzeOne, wav, tjRec, miniConfident, type TajwidError } from "./tajwid";
 import { enqueue, pending as pendingSegments, remove as removeSegment, countFor } from "./queue";
-import { units, unitStatus, dueToday, streakDays, minutesThisWeek, weakPoints, surahAccuracy, pickTestQuestion, type UnitStatus } from "./memo";
+import { units, unitStatus, dueToday, streakDays, minutesThisWeek, weakPoints, surahAccuracy, pickTestQuestion, minutesToday, activityGrid, juzProgress, mergePassage, JUZ_STARTS, type UnitStatus } from "./memo";
+import { buildCalib, isSuppressed, relaxedRules } from "./calib";
+import { downloadBackup, restoreBackup, lastBackup } from "./backup";
+import { APP_VERSION } from "./version";
 
 // ---------------------------------------------------------------------------
 // Utilitaires
@@ -191,7 +194,14 @@ const session = {
   /** Ce que le 2e modèle a entendu pour chaque mot : ratio de ressemblance et squelette identique. */
   heard: new Map<string, { r: number; exact: boolean; text: string }>(),
   verifyAsked: new Set<string>(),
+  /** Fin automatique quand la dernière ayah du passage est entièrement récitée (mode Apprendre). */
+  autoEnd: false,
+  autoEndTimer: 0 as number | undefined,
+  /** Fautes de tajwid masquées par le calibrage personnel pendant cette séance. */
+  calibHidden: 0,
+  learn: null as null | { surah: number; from: number; to: number; idx: number; step: LearnStep; reps: number; played: number; next: null | "done" | { idx: number; step: LearnStep } },
 };
+type LearnStep = "listen" | "read" | "recite" | "chain";
 
 const MAX_AUDIO = 16000 * 60 * 20; // 20 min max gardées pour le diagnostic
 function logEvent(e: Record<string, unknown>, at?: number) {
@@ -243,16 +253,17 @@ function applySessionToWorker() {
   worker.postMessage({ type: "reset" });
 }
 
-async function startSession(mode: "libre" | "hifz", surah: number | null, from = 1, to = 1, opts: { cue?: number; title?: string; atelier?: boolean } = {}) {
+async function startSession(mode: "libre" | "hifz", surah: number | null, from = 1, to = 1, opts: { cue?: number; title?: string; atelier?: boolean; display?: "hidden" | "peek" | "visible"; autoEnd?: boolean; sub?: string } = {}) {
   Object.assign(session, {
     active: true, mode, surah, from, to, showAll: false, rendered: null,
     progress: new Map(), hinted: new Set(), ayahs: [], current: null, mistakes: [], hints: 0, correction: null,
     verdicts: new Map(), audio: [], audioLen: 0, log: [], ayahAt: new Map(), heard: new Map(), verifyAsked: new Set(),
-    tjErrors: new Map(), tjAnalyzed: new Set(), tjAsked: new Set(), tjPending: [], cue: opts.cue ?? 0, recId: "",
+    tjErrors: new Map(), tjAnalyzed: new Set(), tjAsked: new Set(), tjPending: [], cue: opts.cue ?? 0, recId: "", autoEnd: !!opts.autoEnd, calibHidden: 0,
   });
+  clearTimeout(session.autoEndTimer);
   verifyDone.clear();
   const prefs = loadPrefs();
-  session.display = mode === "hifz" && !opts.atelier ? (opts.cue ? "hidden" : prefs.display) : "visible";
+  session.display = opts.display ?? (mode === "hifz" && !opts.atelier ? (opts.cue ? "hidden" : prefs.display) : "visible");
   if (!opts.atelier) session.atelier = null;
   document.body.classList.toggle("atelier", !!opts.atelier);
   $("btn-stop").textContent = opts.atelier ? "Analyser" : "Terminer";
@@ -275,7 +286,7 @@ async function startSession(mode: "libre" | "hifz", surah: number | null, from =
     renderPassage(surah, from, to);
     const s = getSurah(surah);
     $("r-title").textContent = opts.title ?? `${s.tr} · ${s.ar}`;
-    $("r-sub").textContent = opts.atelier ? "Récite lentement, en murattal" : opts.cue ? "Retrouve la suite et récite" : `Ayahs ${from} à ${to}`;
+    $("r-sub").textContent = opts.sub ?? (opts.atelier ? "Récite lentement, en murattal" : opts.cue ? "Retrouve la suite et récite" : `Ayahs ${from} à ${to}`);
     $("r-wait").hidden = true;
     // Test de mémoire : les premiers mots servent d'amorce (pas comptés comme indices).
     if (opts.cue) ayahEl(surah, from)?.querySelectorAll<HTMLElement>(".w").forEach((w, i) => { if (i < opts.cue!) w.classList.add("hint", "cue"); });
@@ -322,6 +333,7 @@ async function endSession() {
   if (!session.active) return;
   session.active = false;
   clearInterval(session.timer);
+  clearTimeout(session.autoEndTimer);
   closeSheet();
   await mic.stop();
   if (worker && engineState === "ready") {
@@ -370,6 +382,7 @@ async function endSession() {
     validated: stats.validated,
     total: stats.total,
     missed: stats.missed,
+    display: session.display,
   };
   if (session.test) rec.mode = "test";
   if (session.tjAnalyzed.size) rec.tajwid = [...session.tjErrors.values()].flat().map(tjRec);
@@ -735,6 +748,10 @@ function onWordProgress(surah: number, ayah: number, matched: number[]) {
     clearTimeout(session.atelier.endTimer);
     if (next < 0) session.atelier.endTimer = window.setTimeout(() => void endSession(), 1300);
   }
+  if (session.autoEnd && session.active && surah === session.surah && ayah === session.to) {
+    clearTimeout(session.autoEndTimer);
+    if (next < 0) session.autoEndTimer = window.setTimeout(() => void endSession(), 1500);
+  }
   scrollToEl(next >= 0 ? words[next] : words[words.length - 1]);
 }
 
@@ -898,19 +915,23 @@ function renderSummary(r: SessionRecord) {
     li.textContent = r.total ? "Tous les mots ont été validés. Bārak Allāhu fīk." : "Aucun mot reconnu pendant cette séance.";
     list.append(li);
   }
-  const add = (ref: string, word: string, kind: string, cls: string) => {
+  const withPlay = new Set<string>();
+  const add = (surah: number, ayah: number, word: string, kind: string, cls: string) => {
     const li = document.createElement("li");
     li.innerHTML = `<span class="m-ref"></span><span class="m-word" lang="ar" dir="rtl"></span><span class="m-kind ${cls}"></span>`;
-    li.querySelector(".m-ref")!.textContent = ref;
+    li.querySelector(".m-ref")!.textContent = `${surah}:${ayah}`;
     li.querySelector(".m-word")!.textContent = word;
     li.querySelector(".m-kind")!.textContent = kind;
+    // Réécoute (ma voix, récitateur) : une seule fois par ayah pour ne pas charger la liste.
+    if (!withPlay.has(`${surah}:${ayah}`)) { withPlay.add(`${surah}:${ayah}`); li.append(playRow(surah, ayah, r.id)); }
     list.append(li);
   };
-  for (const m of r.mistakes) add(`${m.surah}:${m.ayah}`, m.text, (KIND_SHORT[m.kind] ?? m.kind) + (m.corrected ? " · corrigé" : ""), m.corrected ? "ok" : "");
-  for (const m of missed.slice(0, 60)) add(`${m.surah}:${m.ayah}`, m.text, m.kind === "bad" ? "mot faux ?" : "non reconnu", m.kind === "bad" ? "" : "warn");
+  for (const m of r.mistakes) add(m.surah, m.ayah, m.text, (KIND_SHORT[m.kind] ?? m.kind) + (m.corrected ? " · corrigé" : ""), m.corrected ? "ok" : "");
+  for (const m of missed.slice(0, 60)) add(m.surah, m.ayah, m.text, m.kind === "bad" ? "mot faux ?" : "non reconnu", m.kind === "bad" ? "" : "warn");
   $("btn-again").textContent = r.mode === "hifz" ? "Recommencer ce passage" : r.mode === "test" ? "Refaire un test" : "Réviser ce passage en Hifz";
   $("btn-again").hidden = !r.surah;
   renderTestSummary(r);
+  renderLearnSummary(r);
   $("btn-diag").hidden = !lastDiag || !lastDiag.audio.length;
   renderTajwidBox(r);
 }
@@ -923,11 +944,11 @@ const CAT_FR: Record<string, string> = { harf: "lettre", haraka: "haraka", tajwi
 function renderTajwidList(errors: TajwidRec[] | undefined, recId?: string) {
   const list = $("tajwid-list");
   list.replaceChildren();
-  (errors ?? []).forEach((e, i) => list.append(tajwidItem(e, `${e.surah}:${e.ayah}`, recId, i)));
+  (errors ?? []).forEach((e, i) => list.append(tajwidItem(e, `${e.surah}:${e.ayah}`, recId, i, true)));
 }
 
 /** Ligne d'une faute + bouton « Pas une faute » (retour gardé dans l'historique et le diagnostic). */
-function tajwidItem(e: TajwidRec, label: string, recId: string | undefined, idx: number): HTMLLIElement {
+function tajwidItem(e: TajwidRec, label: string, recId: string | undefined, idx: number, play = false): HTMLLIElement {
   const li = document.createElement("li");
   li.innerHTML = `<span class="m-ref"></span><span class="m-word" lang="ar" dir="rtl"></span><span class="m-kind t-msg"></span>`;
   li.querySelector(".m-ref")!.textContent = label;
@@ -944,9 +965,54 @@ function tajwidItem(e: TajwidRec, label: string, recId: string | undefined, idx:
       setFeedback(recId, idx, e.fp);
       toast(e.fp ? "Noté : pas une faute. Merci, ça sert à régler la détection." : "Annulé.");
     });
-    li.append(b);
+    if (play) { const row = playRow(e.surah, e.ayah, recId); row.append(b); li.append(row); }
+    else li.append(b);
   }
   return li;
+}
+
+// Réécoute d'une ayah depuis le bilan : ma récitation (audio de la séance) et le récitateur (EveryAyah, en ligne).
+const pad3 = (n: number) => String(n).padStart(3, "0");
+const qariUrl = (surah: number, ayah: number, qari = loadPrefs().qari) => `https://everyayah.com/data/${qari}/${pad3(surah)}${pad3(ayah)}.mp3`;
+/** Joue l'ayah par le récitateur choisi ; repli sur Alafasy si ce récitateur n'a pas le fichier. */
+function playQari(el: HTMLAudioElement, surah: number, ayah: number): void {
+  el.onerror = () => {
+    if (!el.src.includes("Alafasy_128kbps")) { el.src = qariUrl(surah, ayah, "Alafasy_128kbps"); void el.play().catch(() => undefined); }
+    else { el.onerror = null; toast("Audio du récitateur indisponible (hors ligne ?).", 3500); }
+  };
+  el.src = qariUrl(surah, ayah);
+  void el.play().catch(() => undefined);
+}
+let mineUrl = "";
+function playMine(surah: number, ayah: number): void {
+  const d = lastDiag;
+  if (!d) return;
+  const total = d.audio.reduce((n, c) => n + c.length, 0) / 16000;
+  const seg = segmentForAyah(d.audio, total, new Map(d.ayahAt), surah, ayah);
+  if (!seg) { toast("Pas d'enregistrement pour cette ayah."); return; }
+  if (mineUrl) URL.revokeObjectURL(mineUrl);
+  mineUrl = URL.createObjectURL(wav(d.audio, seg.t0, seg.t1));
+  const el = $<HTMLAudioElement>("sum-audio");
+  el.onerror = null;
+  el.src = mineUrl;
+  void el.play().catch(() => undefined);
+}
+function playRow(surah: number, ayah: number, recId: string | undefined): HTMLDivElement {
+  const row = document.createElement("div");
+  row.className = "play-row";
+  const btn = (label: string, fn: () => void) => { const b = document.createElement("button"); b.className = "link"; b.textContent = label; b.addEventListener("click", fn); row.append(b); };
+  if (recId && lastDiag?.record.id === recId && lastDiag.audio.length && lastDiag.ayahAt.some(([k]) => k === `${surah}:${ayah}`)) btn("▶ Ma voix", () => playMine(surah, ayah));
+  btn("▶ Récitateur", () => playQari($<HTMLAudioElement>("sum-audio"), surah, ayah));
+  return row;
+}
+
+/** Calibrage personnel : masque les fautes que l'utilisateur a déjà marquées « pas une faute » (voir calib.ts). */
+function personal<T extends { surah: number; ayah: number; word: number; category: string; message: string; confidence?: number | null }>(errors: T[]): T[] {
+  if (!errors.length || !loadPrefs().personalCalib) return errors;
+  const c = buildCalib(loadHistory());
+  const kept = errors.filter((e) => !isSuppressed(e, c));
+  session.calibHidden += errors.length - kept.length;
+  return kept;
 }
 
 function setFeedback(recId: string, idx: number, fp: boolean) {
@@ -971,7 +1037,8 @@ function renderTajwidBox(r: SessionRecord) {
     btn.hidden = true;
   });
   if (r.tajwid) {
-    info.textContent = r.tajwid.length ? `${r.tajwid.length} point${r.tajwid.length > 1 ? "s" : ""} à revoir.` : "Aucune erreur détectée.";
+    const hid = r.id === session.recId && session.calibHidden ? ` ${session.calibHidden} point${session.calibHidden > 1 ? "s" : ""} masqué${session.calibHidden > 1 ? "s" : ""} par ton calibrage.` : "";
+    info.textContent = (r.tajwid.length ? `${r.tajwid.length} point${r.tajwid.length > 1 ? "s" : ""} à revoir.` : "Aucune erreur détectée.") + hid;
     btn.hidden = true;
     return;
   }
@@ -1001,7 +1068,7 @@ async function runTajwid() {
   const segs = buildSegments(d.audio, d.ayahAt);
   if (!segs.length) { toast("Rien à analyser dans cette séance."); btn.disabled = false; return; }
   const res = await analyzeSession(url, d.audio, segs, (k, n) => { btn.textContent = `Analyse… ${k}/${n}`; });
-  d.record.tajwid = res.errors.map(tjRec);
+  d.record.tajwid = personal(res.errors).map(tjRec);
   updateSession(d.record.id, { tajwid: d.record.tajwid });
   if (res.failed) toast(`${res.failed} segment${res.failed > 1 ? "s" : ""} non analysé${res.failed > 1 ? "s" : ""} (serveur).`, 4000);
   renderTajwidBox(d.record);
@@ -1020,11 +1087,11 @@ function renderHistory() {
     list.append(li);
     return;
   }
-  for (const r of all.slice(0, 15)) {
+  for (const r of all.slice(0, 8)) {
     const li = document.createElement("li");
     const d = new Date(r.date);
     const when = d.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }) + " " + d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-    li.innerHTML = `<div><strong></strong><span class="muted"></span></div><div class="h-right"><span class="tag ${r.mode}">${r.mode === "hifz" ? "Hifz" : "Libre"}</span><span class="muted"></span></div>`;
+    li.innerHTML = `<div><strong></strong><span class="muted"></span></div><div class="h-right"><span class="tag ${r.mode}">${({ hifz: "Hifz", libre: "Libre", test: "Test", atelier: "Atelier" } as Record<string, string>)[r.mode] ?? "Libre"}</span><span class="muted"></span></div>`;
     li.querySelector("strong")!.textContent = rangeLabel(r);
     li.querySelectorAll(".muted")[0].textContent = `${when} · ${fmtTime(r.durationSec)}`;
     li.querySelectorAll(".muted")[1].textContent = r.total ? `${r.validated}/${r.total} mots` : `${r.ayahs.length} ayahs`;
@@ -1066,6 +1133,11 @@ function openSetup(surah?: number, from?: number, to?: number) {
   $<HTMLInputElement>("chk-sensitive").checked = p.sensitive;
   $<HTMLInputElement>("chk-verify").checked = p.verify;
   $<HTMLInputElement>("chk-tj-colors").checked = p.tajweedColors;
+  $<HTMLInputElement>("chk-calib").checked = p.personalCalib;
+  $<HTMLSelectElement>("sel-font").value = String(p.fontScale);
+  if (!$<HTMLSelectElement>("sel-font").value) $<HTMLSelectElement>("sel-font").value = "1";
+  const relaxed = relaxedRules(buildCalib(loadHistory()));
+  $("calib-info").textContent = relaxed.length ? `Règles assouplies par tes retours : ${relaxed.map((x) => `${x.label.trim()} (${x.fp} retours)`).join(", ")}.` : "Aucune règle assouplie pour l'instant.";
   if (!$("tjc-legend").querySelector(".tjc-legend")) $("tjc-legend").append(legend());
   $<HTMLInputElement>("in-tajwid").value = customServer();
   $<HTMLInputElement>("in-tajwid").placeholder = getDefaultServer() ? "Automatique (serveur Murattil)" : "https://…modal.run";
@@ -1079,7 +1151,7 @@ function readSetup() {
   let from = Math.max(1, Math.min(max, Number($<HTMLInputElement>("in-from").value) || 1));
   let to = Math.max(1, Math.min(max, Number($<HTMLInputElement>("in-to").value) || max));
   if (to < from) [from, to] = [to, from];
-  return { surah, from, to, max, display: $<HTMLSelectElement>("sel-display").value as "hidden" | "peek" | "visible", liveTajwid: $<HTMLInputElement>("chk-live-tajwid").checked, tajwidEngine: $<HTMLSelectElement>("sel-tj-engine").value as "auto" | "mini" | "server", phoneFilters: $<HTMLInputElement>("chk-filters").checked, sensitive: $<HTMLInputElement>("chk-sensitive").checked, verify: $<HTMLInputElement>("chk-verify").checked, tajwidUrl: $<HTMLInputElement>("in-tajwid").value.trim(), tajweedColors: $<HTMLInputElement>("chk-tj-colors").checked, tjSeverity: $<HTMLSelectElement>("sel-tj-severity").value as Severity };
+  return { surah, from, to, max, display: $<HTMLSelectElement>("sel-display").value as "hidden" | "peek" | "visible", liveTajwid: $<HTMLInputElement>("chk-live-tajwid").checked, tajwidEngine: $<HTMLSelectElement>("sel-tj-engine").value as "auto" | "mini" | "server", phoneFilters: $<HTMLInputElement>("chk-filters").checked, sensitive: $<HTMLInputElement>("chk-sensitive").checked, verify: $<HTMLInputElement>("chk-verify").checked, tajwidUrl: $<HTMLInputElement>("in-tajwid").value.trim(), tajweedColors: $<HTMLInputElement>("chk-tj-colors").checked, tjSeverity: $<HTMLSelectElement>("sel-tj-severity").value as Severity, personalCalib: $<HTMLInputElement>("chk-calib").checked, fontScale: Number($<HTMLSelectElement>("sel-font").value) || 1 };
 }
 
 function updateSetup() {
@@ -1168,7 +1240,7 @@ function sendTajwid(surah: number, ayah: number, blob: Blob): Promise<void> {
       if (!session.active && session.recId && res.errors.length) {
         // Résultat arrivé après l'enregistrement de la séance : on complète l'historique.
         const rec = loadHistory().find((r) => r.id === session.recId);
-        const add = res.errors.map(tjRec);
+        const add = personal(res.errors).map(tjRec);
         if (rec) updateSession(rec.id, { tajwid: [...(rec.tajwid ?? []), ...add] });
       }
     } catch {
@@ -1191,7 +1263,8 @@ function scheduleTajwid(surah: number, ayah: number, endAt?: number): Promise<vo
   return sendTajwid(surah, ayah, wav(session.audio, seg.t0, seg.t1));
 }
 
-function applyTajwid(analyzed: string[], errors: TajwidError[]) {
+function applyTajwid(analyzed: string[], all: TajwidError[]) {
+  const errors = personal(all);
   for (const k of analyzed) session.tjAnalyzed.add(k);
   for (const e of errors) {
     const key = `${e.surah}:${e.ayah}:${e.word}`;
@@ -1230,7 +1303,7 @@ async function processQueue() {
         const res = await analyzeOne(url, it.wav, it.surah, it.from, it.to, 60000);
         const rec = loadHistory().find((r) => r.id === it.sessionId);
         if (rec) {
-          const add = res.errors.map(tjRec);
+          const add = personal(res.errors).map(tjRec);
           updateSession(rec.id, { tajwid: [...(rec.tajwid ?? []), ...add] });
           if (lastRecord?.id === rec.id) { lastRecord.tajwid = [...(lastRecord.tajwid ?? []), ...add]; }
         }
@@ -1390,14 +1463,16 @@ async function showAtelierResult(rec: SessionRecord) {
     $("at-status").textContent = `Je n'ai pas reconnu assez de l'ayah pour juger (${engine}). Recommence plus près du micro, sans bruit autour.`;
     return;
   }
+  errors = personal(errors);
   const list = errors.map(tjRec);
   updateSession(rec.id, { tajwid: list });
   const bad = new Set(errors.map((e) => e.word));
+  const shown = errors;
   const score = Math.round((100 * (words.length - bad.size)) / words.length);
   $("at-score").textContent = `${score} %`;
   $("at-score").className = "pill " + (score >= 90 ? "ok" : score >= 60 ? "warn" : "bad");
   $("at-status").textContent = errors.length ? `${errors.length} point${errors.length > 1 ? "s" : ""} à travailler · analyse : ${engine}` : `Aucune faute détectée. Bārak Allāhu fīk. · analyse : ${engine}`;
-  for (const e of errors) verse.querySelector(`.w[data-w="${e.word}"]`)?.classList.add("tj", `tj-${e.category}`);
+  for (const e of shown) verse.querySelector(`.w[data-w="${e.word}"]`)?.classList.add("tj", `tj-${e.category}`);
   const ul = $("at-list");
   list.forEach((e, i) => ul.append(tajwidItem(e, CAT_FR[e.category] ?? e.category, rec.id, i)));
 }
@@ -1466,7 +1541,6 @@ function renderTestSummary(r: SessionRecord) {
 // ---------------------------------------------------------------------------
 // Accueil : régularité, révision du jour ; Ma mémorisation ; Points faibles
 // ---------------------------------------------------------------------------
-const JUZ_STARTS: [number, number][] = [[1,1],[2,142],[2,253],[3,93],[4,24],[4,148],[5,82],[6,111],[7,88],[8,41],[9,93],[11,6],[12,53],[15,1],[17,1],[18,75],[21,1],[23,1],[25,21],[27,56],[29,46],[33,31],[36,28],[39,32],[41,47],[46,1],[51,31],[58,1],[67,1],[78,1]];
 function juzOf(surah: number): number {
   let j = 1;
   JUZ_STARTS.forEach(([s, a], i) => { if (s < surah || (s === surah && a === 1)) j = i + 1; });
@@ -1475,7 +1549,11 @@ function juzOf(surah: number): number {
 
 function memoStatuses(): UnitStatus[] {
   const hist = loadHistory();
-  return units(loadPrefs().memorized, (s) => getSurah(s).verses.length, (s) => getSurah(s).tr).map((u) => unitStatus(u, hist));
+  const p = loadPrefs();
+  const us = units(p.memorized, (s) => getSurah(s).verses.length, (s) => getSurah(s).tr);
+  // Passages appris (mode Apprendre) dans des sourates pas encore mémorisées en entier.
+  for (const l of p.learning ?? []) if (!p.memorized.includes(l.surah)) us.push({ ...l, name: `${getSurah(l.surah).tr} ${l.from}–${l.to}` });
+  return us.map((u) => unitStatus(u, hist));
 }
 
 const ago = (ms: number | null) => {
@@ -1488,14 +1566,18 @@ const STRENGTH_FR = { fort: "Fort", moyen: "Moyen", fragile: "Fragile", nouveau:
 function renderHome() {
   const hist = loadHistory();
   const st = streakDays(hist), min = minutesThisWeek(hist);
-  $("streak").textContent = hist.length ? `Régularité : ${st} jour${st > 1 ? "s" : ""} d'affilée · ${min} min cette semaine` : "";
+  const goal = loadPrefs().dailyGoalMin || 10, today = minutesToday(hist);
+  $("goal-title").textContent = today >= goal ? `Objectif du jour atteint : ${today} min` : `Objectif du jour : ${today} / ${goal} min`;
+  $("goal-ring").style.strokeDashoffset = String(113.1 * (1 - Math.min(1, today / goal)));
+  $("goal-card").classList.toggle("done", today >= goal);
+  $("streak").textContent = hist.length ? `${st} jour${st > 1 ? "s" : ""} d'affilée · ${min} min cette semaine` : "Bismillah : fais ta première séance.";
   const list = $("due-list");
   list.replaceChildren();
   const mem = loadPrefs().memorized;
-  if (!mem.length) {
+  if (!mem.length && !(loadPrefs().learning ?? []).length) {
     const li = document.createElement("li");
     li.className = "empty";
-    li.textContent = "Coche d'abord les sourates que tu connais dans « Ma mémorisation » : l'app planifiera leur révision.";
+    li.textContent = "Coche les sourates que tu connais dans « Ma mémorisation », ou apprends un passage : l'app planifiera les révisions.";
     list.append(li);
     return;
   }
@@ -1512,12 +1594,28 @@ function renderHome() {
     li.innerHTML = `<div><strong></strong><span class="muted"></span></div><button class="btn primary">Réviser</button>`;
     li.querySelector("strong")!.textContent = u.name;
     li.querySelector(".muted")!.textContent = `${STRENGTH_FR[u.strength]} · ${ago(u.lastDate)}`;
-    li.querySelector("button")!.addEventListener("click", () => { session.test = null; void startSession("hifz", u.surah, u.from, u.to); });
+    li.querySelector("button")!.addEventListener("click", () => { session.test = null; session.learn = null; void startSession("hifz", u.surah, u.from, u.to, { display: loadPrefs().display === "visible" ? "hidden" : undefined }); });
     list.append(li);
   }
 }
 
 function renderMemo() {
+  const learning = (loadPrefs().learning ?? []).filter((l) => !loadPrefs().memorized.includes(l.surah));
+  $("memo-learning").hidden = !learning.length;
+  const ll = $("learning-list");
+  ll.replaceChildren();
+  for (const l of learning) {
+    const li = document.createElement("li");
+    li.innerHTML = `<div><strong></strong><span class="muted"></span></div><button class="btn">Retirer</button>`;
+    li.querySelector("strong")!.textContent = `${getSurah(l.surah).tr} ${l.from}–${l.to}`;
+    li.querySelector(".muted")!.textContent = `${l.to - l.from + 1} ayah${l.to > l.from ? "s" : ""} sur ${getSurah(l.surah).verses.length}`;
+    li.querySelector("button")!.addEventListener("click", () => {
+      const p = loadPrefs();
+      savePrefs({ ...p, learning: (p.learning ?? []).filter((x) => !(x.surah === l.surah && x.from === l.from && x.to === l.to)) });
+      renderMemo();
+    });
+    ll.append(li);
+  }
   const mem = new Set(loadPrefs().memorized);
   const statuses = memoStatuses();
   const acc = surahAccuracy(loadHistory());
@@ -1606,6 +1704,234 @@ function renderWeak() {
 }
 
 // ---------------------------------------------------------------------------
+// Progression : objectif du jour, Coran mémorisé, activité, sauvegarde
+// ---------------------------------------------------------------------------
+function applyFontScale() {
+  document.documentElement.style.setProperty("--q-scale", String(loadPrefs().fontScale || 1));
+}
+
+function renderStats() {
+  const hist = loadHistory();
+  const p = loadPrefs();
+  const goal = p.dailyGoalMin || 10, today = minutesToday(hist);
+  $<HTMLSelectElement>("sel-goal").value = String(goal);
+  $("goal-bar").style.width = Math.min(100, Math.round((100 * today) / goal)) + "%";
+  $("goal-detail").textContent = today >= goal ? `Objectif atteint : ${today} min aujourd'hui. Bārak Allāhu fīk.` : `${today} min aujourd'hui. Encore ${goal - today} min.`;
+  $("st-streak").textContent = String(streakDays(hist));
+  $("st-week").textContent = String(minutesThisWeek(hist));
+  $("st-total").textContent = (hist.reduce((n, r) => n + r.durationSec, 0) / 3600).toFixed(1).replace(".", ",");
+  const v = hist.reduce((n, r) => n + (r.validated ?? 0), 0), t = hist.reduce((n, r) => n + (r.total ?? 0), 0);
+  $("st-acc").textContent = t ? `${Math.round((100 * v) / t)} %` : "–";
+  // Coran mémorisé : sourates cochées + passages appris, comptés ayah par ayah.
+  const juz = juzProgress(p.memorized, p.learning ?? [], (s) => getSurah(s).verses.length);
+  const total = juz.reduce((n, j) => n + j.total, 0), done = juz.reduce((n, j) => n + j.done, 0);
+  const pct = total ? (100 * done) / total : 0;
+  $("st-quran").textContent = `${pct < 10 ? pct.toFixed(1).replace(".", ",") : Math.round(pct)} %`;
+  $("quran-bar").style.width = pct + "%";
+  $("quran-detail").textContent = `${done} ayahs sur ${total} · ${p.memorized.length} sourate${p.memorized.length > 1 ? "s" : ""} complète${p.memorized.length > 1 ? "s" : ""}`;
+  $("juz-grid").replaceChildren(...juz.map((j) => {
+    const c = document.createElement("div");
+    const r = j.total ? j.done / j.total : 0;
+    c.className = "juz-cell" + (r >= 0.999 ? " full" : "");
+    c.title = `Juz ${j.juz} : ${j.done}/${j.total} ayahs`;
+    c.innerHTML = `<i style="height:${Math.round(100 * r)}%"></i><b>${j.juz}</b>`;
+    return c;
+  }));
+  const grid = activityGrid(hist, 12);
+  const todayKey = grid.filter((d) => !d.future).pop()?.key;
+  $("activity").replaceChildren(...grid.map((d) => {
+    const c = document.createElement("span");
+    c.dataset.l = String(d.minutes <= 0 ? 0 : d.minutes < goal / 2 ? 1 : d.minutes < goal ? 2 : 3);
+    if (d.future) c.className = "future";
+    if (d.key === todayKey) c.classList.add("today");
+    c.title = `${d.key} : ${d.minutes} min`;
+    return c;
+  }));
+  const lb = lastBackup();
+  $("backup-info").textContent = `${hist.length} séance${hist.length > 1 ? "s" : ""} gardée${hist.length > 1 ? "s" : ""} sur ce téléphone. ` + (lb ? `Dernière sauvegarde : ${new Date(lb).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" })}.` : "Jamais sauvegardé : le fichier protège ton historique si le navigateur efface ses données.");
+}
+
+// ---------------------------------------------------------------------------
+// Apprendre un passage : écouter, lire, réciter de mémoire, enchaîner
+// ---------------------------------------------------------------------------
+const STEP_LABEL: Record<LearnStep, string> = { listen: "Écouter", read: "Lire", recite: "De mémoire", chain: "Enchaîner" };
+
+/** Reprend après le dernier passage appris de cette sourate, sinon au début. */
+function learnDefaultFrom(surah: number): number {
+  const n = getSurah(surah).verses.length;
+  const last = (loadPrefs().learning ?? []).filter((l) => l.surah === surah).sort((a, b) => b.to - a.to)[0];
+  return last && last.to < n ? last.to + 1 : 1;
+}
+
+function openLearnSetup() {
+  const sel = $<HTMLSelectElement>("ln-surah");
+  if (!sel.options.length) for (const s of surahs) { const o = document.createElement("option"); o.value = String(s.n); o.textContent = `${s.n}. ${s.tr} · ${s.ar} (${s.verses.length})`; sel.append(o); }
+  const p = loadPrefs();
+  sel.value = String(p.surah);
+  $<HTMLInputElement>("ln-from").value = String(learnDefaultFrom(p.surah));
+  $<HTMLSelectElement>("ln-reps").value = String(p.listenReps);
+  if (!$<HTMLSelectElement>("ln-reps").value) $<HTMLSelectElement>("ln-reps").value = "3";
+  $<HTMLSelectElement>("ln-qari").value = p.qari;
+  if (!$<HTMLSelectElement>("ln-qari").value) $<HTMLSelectElement>("ln-qari").value = "Alafasy_128kbps";
+  updateLearnSetup();
+  show("learn-setup");
+}
+
+function readLearnSetup() {
+  const surah = Number($<HTMLSelectElement>("ln-surah").value) || 1;
+  const n = getSurah(surah).verses.length;
+  const from = Math.max(1, Math.min(n, Number($<HTMLInputElement>("ln-from").value) || 1));
+  const to = Math.min(n, from + (Number($<HTMLSelectElement>("ln-count").value) || 3) - 1);
+  return { surah, from, to, n };
+}
+
+function updateLearnSetup() {
+  const { surah, from, to, n } = readLearnSetup();
+  $<HTMLInputElement>("ln-from").max = String(n);
+  $("ln-preview").textContent = ayahWords(getSurah(surah).verses[from - 1]).words.slice(0, 4).join(" ") + " …";
+  $("btn-start-learn").textContent = `Commencer · ayah${to > from ? "s" : ""} ${from}${to > from ? "–" + to : ""}`;
+}
+
+function startLearn() {
+  const { surah, from, to } = readLearnSetup();
+  const reps = Number($<HTMLSelectElement>("ln-reps").value) || 3;
+  savePrefs({ ...loadPrefs(), surah, listenReps: reps, qari: $<HTMLSelectElement>("ln-qari").value || "Alafasy_128kbps" });
+  session.test = null;
+  session.atelier = null;
+  session.learn = { surah, from, to, idx: from, step: "listen", reps, played: 0, next: null };
+  startVerifier();
+  learnListen();
+}
+
+function paintLearnSteps(step: LearnStep) {
+  const order: LearnStep[] = ["listen", "read", "recite", "chain"];
+  $("ln-steps").querySelectorAll("li").forEach((li, i) => {
+    li.classList.toggle("done", i < order.indexOf(step));
+    li.classList.toggle("cur", i === order.indexOf(step));
+  });
+}
+
+function learnListen() {
+  const l = session.learn;
+  if (!l) return;
+  l.step = "listen";
+  l.played = 0;
+  l.next = null;
+  const s = getSurah(l.surah);
+  $("ln-title").textContent = `${s.tr} · ayah ${l.idx}`;
+  $("ln-pos").textContent = `${l.idx - l.from + 1} / ${l.to - l.from + 1}`;
+  paintLearnSteps("listen");
+  const words = ayahWords(s.verses[l.idx - 1]).words;
+  const colors = loadPrefs().tajweedColors && tajweedReady();
+  $("ln-verse").replaceChildren(...words.flatMap((w, i) => {
+    const sp = document.createElement("span"); sp.className = "w";
+    if (colors) sp.append(...colorize(l.surah, l.idx, i, w)); else sp.textContent = w;
+    return [sp, document.createTextNode(" ")];
+  }));
+  show("learn");
+  if (navigator.onLine) playLearnAudio();
+  else $("ln-status").textContent = "Hors ligne : pas d'audio du récitateur. Lis l'ayah plusieurs fois à voix haute, puis récite.";
+}
+
+function playLearnAudio() {
+  const l = session.learn;
+  if (!l) return;
+  $("ln-status").textContent = `Écoute ${Math.min(l.played + 1, l.reps)} / ${l.reps}. Suis le texte des yeux.`;
+  playQari($<HTMLAudioElement>("ln-audio"), l.surah, l.idx);
+}
+
+function onLearnAudioEnded() {
+  const l = session.learn;
+  if (!l || l.step !== "listen" || document.body.dataset.screen !== "learn") return;
+  l.played++;
+  if (l.played < l.reps) { const el = $<HTMLAudioElement>("ln-audio"); el.currentTime = 0; $("ln-status").textContent = `Écoute ${l.played + 1} / ${l.reps}. Suis le texte des yeux.`; void el.play().catch(() => undefined); }
+  else $("ln-status").textContent = "À toi : récite l'ayah avec le texte sous les yeux.";
+}
+
+function learnRecite(step: Exclude<LearnStep, "listen">) {
+  const l = session.learn;
+  if (!l) return;
+  $<HTMLAudioElement>("ln-audio").pause();
+  l.step = step;
+  l.next = null;
+  const s = getSurah(l.surah);
+  const from = step === "chain" ? l.from : l.idx;
+  const sub = step === "read" ? "Étape 2 sur 4 : récite avec le texte" : step === "recite" ? "Étape 3 sur 4 : récite de mémoire" : `Étape 4 sur 4 : enchaîne les ayahs ${l.from} à ${l.idx}`;
+  void startSession("hifz", l.surah, from, l.idx, { display: step === "read" ? "visible" : "hidden", autoEnd: true, title: `Apprendre · ${s.tr} ${l.idx}`, sub });
+}
+
+/** Bilan d'une étape : validée si au moins 90 % des mots du passage sont reconnus (et sans indice, de mémoire). */
+function renderLearnSummary(r: SessionRecord) {
+  const l = session.learn;
+  const banner = $("learn-banner");
+  if (!l || l.step === "listen") { banner.hidden = true; return; }
+  const s = getSurah(l.surah);
+  const from = l.step === "chain" ? l.from : l.idx;
+  let expected = 0;
+  for (let a = from; a <= l.idx; a++) expected += ayahWords(s.verses[a - 1]).words.length;
+  const ok = (r.validated ?? 0) >= Math.ceil(0.9 * expected) && (l.step === "read" || r.hints === 0);
+  const next = $("btn-next-q");
+  next.hidden = false;
+  banner.hidden = false;
+  banner.classList.toggle("retry", !ok);
+  $("sum-range").textContent = `${s.tr} · ayah ${l.idx} · étape « ${STEP_LABEL[l.step]} »`;
+  if (!ok) {
+    l.next = { idx: l.idx, step: l.step };
+    banner.textContent = r.hints && l.step !== "read" ? "Pas encore : tu as pris un indice. Recommence sans indice." : `Pas encore : ${r.validated ?? 0} mots reconnus sur ${expected}. Recommence cette étape.`;
+    next.textContent = "Recommencer cette étape";
+  } else if (l.step === "read") {
+    l.next = { idx: l.idx, step: "recite" };
+    banner.textContent = "Validé. Maintenant, la même ayah de mémoire.";
+    next.textContent = "Suite : de mémoire";
+  } else if (l.step === "recite" && l.idx > l.from) {
+    l.next = { idx: l.idx, step: "chain" };
+    banner.textContent = "Validé. Enchaîne maintenant avec les ayahs précédentes.";
+    next.textContent = `Suite : enchaîner ${l.from}–${l.idx}`;
+  } else if (l.idx < l.to) {
+    l.next = { idx: l.idx + 1, step: "listen" };
+    banner.textContent = "Validé. Ayah suivante.";
+    next.textContent = `Ayah suivante (${l.idx + 1})`;
+  } else {
+    l.next = "done";
+    banner.textContent = "Passage appris. Bārak Allāhu fīk.";
+    next.textContent = "Terminer";
+  }
+  $("btn-again").hidden = false;
+  $("btn-again").textContent = "Réécouter l'ayah";
+}
+
+function learnNext() {
+  const l = session.learn;
+  if (!l || !l.next) return;
+  if (l.next === "done") { finishLearn(); return; }
+  l.idx = l.next.idx;
+  if (l.next.step === "listen") learnListen();
+  else learnRecite(l.next.step);
+}
+
+/** Le passage appris entre dans les révisions ; une sourate couverte en entier passe dans « Ma mémorisation ». */
+function finishLearn() {
+  const l = session.learn;
+  if (!l) return;
+  session.learn = null;
+  const p = loadPrefs();
+  const s = getSurah(l.surah);
+  let learning = mergePassage(p.learning ?? [], { surah: l.surah, from: l.from, to: l.to });
+  let memorized = p.memorized;
+  const already = memorized.includes(l.surah);
+  const whole = learning.find((x) => x.surah === l.surah && x.from === 1 && x.to >= s.verses.length);
+  if (whole || memorized.includes(l.surah)) {
+    learning = learning.filter((x) => x.surah !== l.surah);
+    if (!memorized.includes(l.surah)) memorized = [...memorized, l.surah].sort((a, b) => a - b);
+  }
+  savePrefs({ ...p, learning, memorized });
+  toast(already ? `${s.tr} ${l.from}–${l.to} : passage retravaillé. La sourate est déjà dans tes révisions.` : whole ? `${s.tr} est apprise en entier. Elle entre dans « Ma mémorisation ».` : `${s.tr} ${l.from}–${l.to} entre dans tes révisions. Première révision demain.`, 5000);
+  renderHome();
+  renderHistory();
+  show("home");
+}
+
+// ---------------------------------------------------------------------------
 // Service worker (hors ligne)
 // ---------------------------------------------------------------------------
 function registerSW() {
@@ -1642,7 +1968,8 @@ async function boot() {
   document.querySelectorAll<HTMLElement>("[data-nav]").forEach((b) => b.addEventListener("click", () => {
     const to = b.dataset.nav!;
     session.test = to === "home" ? null : session.test;
-    if (to === "home") { renderHistory(); renderHome(); }
+    if (to === "home") { session.learn = null; renderHistory(); renderHome(); }
+    if (to === "stats") renderStats();
     if (to === "memo") renderMemo();
     if (to === "weak") renderWeak();
     show(to);
@@ -1663,7 +1990,25 @@ async function boot() {
     session.test = { count: Number($<HTMLSelectElement>("test-count").value), len: Number($<HTMLSelectElement>("test-len").value), scope, idx: 0, asked: new Set(), results: [] };
     nextTestQuestion();
   });
-  $("btn-next-q").addEventListener("click", nextTestQuestion);
+  $("btn-next-q").addEventListener("click", () => { if (session.learn) learnNext(); else nextTestQuestion(); });
+  $("go-learn").addEventListener("click", openLearnSetup);
+  $("btn-start-learn").addEventListener("click", startLearn);
+  ["ln-surah", "ln-from"].forEach((id) => $(id).addEventListener("input", () => { if (id === "ln-surah") $<HTMLInputElement>("ln-from").value = String(learnDefaultFrom(Number($<HTMLSelectElement>("ln-surah").value))); updateLearnSetup(); }));
+  $("ln-go").addEventListener("click", () => learnRecite("read"));
+  $("ln-again").addEventListener("click", () => { const l = session.learn; if (l) { l.played = 0; playLearnAudio(); } });
+  $("ln-quit").addEventListener("click", () => { $<HTMLAudioElement>("ln-audio").pause(); session.learn = null; renderHome(); renderHistory(); show("home"); });
+  $("ln-audio").addEventListener("ended", onLearnAudioEnded);
+  $<HTMLSelectElement>("sel-goal").addEventListener("change", () => { savePrefs({ ...loadPrefs(), dailyGoalMin: Number($<HTMLSelectElement>("sel-goal").value) || 10 }); renderStats(); });
+  $("btn-backup").addEventListener("click", () => { const name = downloadBackup(APP_VERSION); toast(`Sauvegarde téléchargée : ${name}`, 4000); renderStats(); });
+  $("btn-restore").addEventListener("click", () => $<HTMLInputElement>("in-restore").click());
+  $<HTMLInputElement>("in-restore").addEventListener("change", (e) => {
+    const input = e.currentTarget as HTMLInputElement;
+    const f = input.files?.[0];
+    input.value = "";
+    if (!f) return;
+    void restoreBackup(f).then((r) => { toast(`Sauvegarde restaurée : ${r.added} séance${r.added > 1 ? "s" : ""} ajoutée${r.added > 1 ? "s" : ""} (${r.total} au total).`, 5000); applyFontScale(); renderStats(); })
+      .catch((err) => toast("Restauration impossible : " + String(err?.message ?? err), 5000));
+  });
   document.querySelectorAll<HTMLElement>("[data-juz]").forEach((b) => b.addEventListener("click", () => {
     const p = loadPrefs();
     const set = new Set(p.memorized);
@@ -1691,8 +2036,10 @@ async function boot() {
     updateSetup();
   }));
   $("btn-start-hifz").addEventListener("click", () => {
-    const { surah, from, to, display, liveTajwid, tajwidEngine, phoneFilters, sensitive, verify, tajwidUrl, tajweedColors, tjSeverity } = readSetup();
-    savePrefs({ ...loadPrefs(), surah, from, to, display, liveTajwid, tajwidEngine, phoneFilters, sensitive, verify, tajwidUrl, tajweedColors, tjSeverity });
+    const { surah, from, to, display, liveTajwid, tajwidEngine, phoneFilters, sensitive, verify, tajwidUrl, tajweedColors, tjSeverity, personalCalib, fontScale } = readSetup();
+    savePrefs({ ...loadPrefs(), surah, from, to, display, liveTajwid, tajwidEngine, phoneFilters, sensitive, verify, tajwidUrl, tajweedColors, tjSeverity, personalCalib, fontScale });
+    applyFontScale();
+    session.learn = null;
     if (tajwidEngine !== "server") startMini();
     if (verify) startVerifier();
     session.test = null;
@@ -1712,6 +2059,7 @@ async function boot() {
   $("sheet-secondary").addEventListener("click", (e) => sheetAction((e.currentTarget as HTMLElement).dataset.action as CorrectionAction));
   $("btn-again").addEventListener("click", () => {
     const r = lastRecord;
+    if (session.learn) { learnListen(); return; }
     if (r?.mode === "test") { openTestSetup(); return; }
     session.test = null;
     if (!r?.surah) return;
@@ -1721,6 +2069,7 @@ async function boot() {
   // Touche l'écran pour réveiller l'audio si le navigateur l'a suspendu.
   $("r-scroll").addEventListener("click", () => mic.kick());
 
+  applyFontScale();
   renderHome();
   initInstall(toast);
   void processQueue();
@@ -1734,6 +2083,7 @@ async function boot() {
   else if (go === "test") openTestSetup();
   else if (go === "atelier") openAtelierSetup();
   else if (go === "memo") { renderMemo(); show("memo"); }
+  else if (go === "learn") openLearnSetup();
 }
 
 void boot().catch((e) => {

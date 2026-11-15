@@ -13,8 +13,6 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Murattil" />
-  <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 </head>
 <body data-screen="home">
   <!-- ACCUEIL -->
@@ -44,13 +42,23 @@
         </div>
       </div>
 
-      <p id="streak" class="streak muted"></p>
+      <button id="goal-card" class="card goal-card" data-nav="stats" aria-label="Progression">
+        <svg class="ring" viewBox="0 0 44 44" aria-hidden="true"><circle class="ring-bg" cx="22" cy="22" r="18" /><circle id="goal-ring" class="ring-fg" cx="22" cy="22" r="18" /></svg>
+        <span class="goal-text"><strong id="goal-title">Objectif du jour</strong><span id="streak" class="muted"></span></span>
+        <span class="goal-more muted">Progression ›</span>
+      </button>
 
       <section id="due-card" class="card due-card">
         <div class="due-head"><h2>Révision du jour</h2><button class="link" data-nav="memo">Ma mémorisation</button></div>
         <ul id="due-list" class="due-list"></ul>
       </section>
 
+      <button class="card mode-card" id="go-learn">
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /><circle cx="12" cy="12" r="9" /></svg>
+        </span>
+        <span class="mode-text"><strong>Apprendre un passage</strong><span>Ayah par ayah : tu écoutes, tu lis, tu récites de mémoire, puis tu enchaînes. Le passage entre ensuite dans tes révisions.</span></span>
+      </button>
       <button class="card mode-card" id="go-hifz">
         <span class="mode-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24"><path d="M12 6c-2-1.5-5-2-8-1.5v13c3-.5 6 0 8 1.5 2-1.5 5-2 8-1.5v-13c-3-.5-6 0-8 1.5Zm0 0v13" /></svg>
@@ -111,6 +119,16 @@
       </label>
       <label class="toggle"><input type="checkbox" id="chk-tj-colors" /><span>Couleurs du tajwid sur le texte</span></label>
       <details class="adv" id="tjc-legend"><summary>Légende des couleurs</summary><p class="muted">Source : projet quran-tajweed (cpfair, CC-BY 4.0), règles de la riwaya de Hafs.</p></details>
+      <details class="adv" id="detect-adv"><summary>Réglages de détection (tajwid, sévérité, micro)</summary>
+      <div class="adv-body">
+      <label class="field"><span>Taille du texte</span>
+        <select id="sel-font">
+          <option value="0.85">Petit</option>
+          <option value="1">Normal</option>
+          <option value="1.15">Grand</option>
+          <option value="1.3">Très grand</option>
+        </select>
+      </label>
       <label class="field"><span>Moteur du tajwid</span>
         <select id="sel-tj-engine">
           <option value="auto">Automatique (téléphone si le modèle est disponible)</option>
@@ -129,10 +147,12 @@
       <label class="toggle"><input type="checkbox" id="chk-verify" /><span>Double vérification des mots par un 2e modèle (recommandé, +88 Mo téléchargés une fois)</span></label>
       <label class="toggle"><input type="checkbox" id="chk-sensitive" /><span>Détection sensible des erreurs (plus d'erreurs repérées, parfois une fausse alerte)</span></label>
       <label class="toggle"><input type="checkbox" id="chk-filters" /><span>Filtre anti-bruit du téléphone (seulement si tu es dans un endroit bruyant)</span></label>
-      <details class="adv"><summary>Avancé</summary>
-        <label class="field"><span>Autre serveur tajwid (laisser vide : automatique)</span>
-          <input id="in-tajwid" type="url" inputmode="url" placeholder="Automatique (serveur Murattil)" autocomplete="off" />
-        </label>
+      <label class="toggle"><input type="checkbox" id="chk-calib" /><span>Calibrage personnel : tes retours « Pas une faute » assouplissent les règles concernées</span></label>
+      <p id="calib-info" class="muted small"></p>
+      <label class="field"><span>Autre serveur tajwid (laisser vide : automatique)</span>
+        <input id="in-tajwid" type="url" inputmode="url" placeholder="Automatique (serveur Murattil)" autocomplete="off" />
+      </label>
+      </div>
       </details>
       <div class="quick">
         <span class="muted">Raccourcis :</span>
@@ -192,6 +212,7 @@
         <div><strong id="sum-review">0</strong><span>À revoir</span></div>
       </div>
       <p id="sum-range" class="muted center"></p>
+      <p id="learn-banner" class="learn-banner" hidden></p>
       <h3 id="sum-mistakes-title">Mots à revoir</h3>
       <ul id="sum-list" class="mistakes"></ul>
       <section id="tajwid-box" class="card tajwid-box">
@@ -200,6 +221,7 @@
         <button id="btn-tajwid" class="btn primary">Lancer l'analyse tajwid</button>
         <ul id="tajwid-list" class="mistakes"></ul>
       </section>
+      <audio id="sum-audio" preload="none"></audio>
       <div class="sum-actions">
         <button id="btn-next-q" class="btn primary big" hidden>Question suivante</button>
         <button id="btn-again" class="btn primary big">Recommencer ce passage</button>
@@ -223,7 +245,111 @@
         <button class="chip" data-juz="29">Juz Tabarak</button>
         <button class="chip" data-juz="none">Tout décocher</button>
       </div>
+      <div id="memo-learning" hidden>
+        <h3>Passages en cours d'apprentissage</h3>
+        <ul id="learning-list" class="due-list"></ul>
+      </div>
       <ul id="memo-list" class="memo-list"></ul>
+    </div>
+  </section>
+
+  <!-- PROGRESSION -->
+  <section id="s-stats" class="screen">
+    <header class="top">
+      <button class="icon-btn" data-nav="home" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+      <h1 class="top-title">Progression</h1>
+      <span></span>
+    </header>
+    <div class="setup-body">
+      <section class="card">
+        <div class="due-head"><h2>Objectif du jour</h2>
+          <select id="sel-goal" class="mini-select" aria-label="Objectif en minutes">
+            <option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="20">20 min</option><option value="30">30 min</option><option value="45">45 min</option><option value="60">60 min</option>
+          </select>
+        </div>
+        <div class="progress"><div id="goal-bar" class="bar"></div></div>
+        <p id="goal-detail" class="muted small"></p>
+      </section>
+      <div class="stats">
+        <div><strong id="st-streak">0</strong><span>Jours d'affilée</span></div>
+        <div><strong id="st-week">0</strong><span>Min cette semaine</span></div>
+        <div><strong id="st-total">0</strong><span>Heures au total</span></div>
+        <div><strong id="st-acc">–</strong><span>Mots validés</span></div>
+      </div>
+      <section class="card">
+        <div class="due-head"><h2>Coran mémorisé</h2><strong id="st-quran"></strong></div>
+        <div class="progress"><div id="quran-bar" class="bar"></div></div>
+        <p id="quran-detail" class="muted small"></p>
+        <div id="juz-grid" class="juz-grid" aria-label="Avancement par juz"></div>
+        <p class="muted small">Une case par juz (1 à 30). Plus elle est pleine, plus tu en connais.</p>
+      </section>
+      <section class="card">
+        <div class="due-head"><h2>Activité des 12 dernières semaines</h2></div>
+        <div id="activity" class="activity" aria-label="Minutes par jour"></div>
+        <p class="muted small">Une case par jour, du lundi au dimanche. Plus elle est foncée, plus tu as récité.</p>
+      </section>
+      <section class="card">
+        <div class="due-head"><h2>Sauvegarde</h2></div>
+        <p id="backup-info" class="muted small"></p>
+        <div class="row2">
+          <button id="btn-backup" class="btn">Sauvegarder</button>
+          <button id="btn-restore" class="btn">Restaurer</button>
+        </div>
+        <input id="in-restore" type="file" accept="application/json,.json" hidden />
+      </section>
+    </div>
+  </section>
+
+  <!-- APPRENDRE : CHOIX -->
+  <section id="s-learn-setup" class="screen">
+    <header class="top">
+      <button class="icon-btn" data-nav="home" aria-label="Retour"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg></button>
+      <h1 class="top-title">Apprendre un passage</h1>
+      <span></span>
+    </header>
+    <div class="setup-body">
+      <p class="muted">Pour chaque ayah : tu écoutes le récitateur, tu récites avec le texte, puis de mémoire. Ensuite tu enchaînes avec les ayahs précédentes.</p>
+      <label class="field"><span>Sourate</span><select id="ln-surah"></select></label>
+      <div class="row2">
+        <label class="field"><span>À partir de l'ayah</span><input id="ln-from" type="number" inputmode="numeric" min="1" value="1" /></label>
+        <label class="field"><span>Nombre d'ayahs</span>
+          <select id="ln-count"><option>1</option><option>2</option><option selected>3</option><option>5</option><option>7</option><option>10</option></select>
+        </label>
+      </div>
+      <div class="row2">
+        <label class="field"><span>Écoutes par ayah</span>
+          <select id="ln-reps"><option>1</option><option>3</option><option>5</option><option>7</option></select>
+        </label>
+        <label class="field"><span>Récitateur</span>
+          <select id="ln-qari">
+            <option value="Alafasy_128kbps">Mishary Alafasy</option>
+            <option value="Husary_128kbps">Mahmoud Al-Husary</option>
+            <option value="Minshawy_Murattal_128kbps">Al-Minshawi (murattal)</option>
+            <option value="Abdul_Basit_Murattal_192kbps">Abdul Basit (murattal)</option>
+          </select>
+        </label>
+      </div>
+      <p id="ln-preview" class="preview" dir="rtl" lang="ar"></p>
+      <button id="btn-start-learn" class="btn primary big">Commencer</button>
+    </div>
+  </section>
+
+  <!-- APPRENDRE : ÉCOUTE -->
+  <section id="s-learn" class="screen">
+    <header class="top">
+      <button class="icon-btn" id="ln-quit" aria-label="Arrêter"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+      <h1 id="ln-title" class="top-title">Apprendre</h1>
+      <span id="ln-pos" class="pill"></span>
+    </header>
+    <div class="summary-body">
+      <ol id="ln-steps" class="ln-steps"><li>Écouter</li><li>Lire</li><li>De mémoire</li><li>Enchaîner</li></ol>
+      <p id="ln-verse" class="mushaf at-verse" dir="rtl" lang="ar"></p>
+      <p id="ln-status" class="muted center"></p>
+      <audio id="ln-audio" controls preload="auto"></audio>
+      <div class="sum-actions">
+        <button id="ln-go" class="btn primary big">Je récite avec le texte</button>
+        <button id="ln-again" class="btn ghost big">Réécouter</button>
+      </div>
     </div>
   </section>
 

@@ -34,8 +34,14 @@ export function units(memorized: number[], ayahCount: (s: number) => number, nam
 
 function accuracyOf(r: SessionRecord): number | null {
   if (!r.total) return null;
-  const tajwid = r.tajwid?.length ?? 0;
+  const tajwid = r.tajwid?.filter((t) => !t.fp).length ?? 0;
   return Math.max(0, ((r.validated ?? 0) - tajwid * 0.5) / r.total);
+}
+
+/** Récitée de mémoire : texte caché (ou premières lettres) et presque pas d'indices. Anciennes séances : on fait confiance. */
+export function fromMemory(r: SessionRecord): boolean {
+  if (r.display === "visible") return false;
+  return (r.hints ?? 0) <= Math.max(1, Math.floor((r.total ?? 0) * 0.03));
 }
 
 /** Une séance « couvre » une unité si elle a récité au moins 70 % de ses ayahs. */
@@ -54,7 +60,7 @@ export function unitStatus(u: Unit, history: SessionRecord[], now = Date.now()):
   let streak = 0;
   for (const r of sessions) {
     const acc = accuracyOf(r);
-    if (acc !== null && acc >= 0.95) streak++;
+    if (acc !== null && acc >= 0.95 && fromMemory(r)) streak++;
     else streak = 0;
   }
   const last = sessions[sessions.length - 1];
@@ -109,6 +115,7 @@ export function weakPoints(history: SessionRecord[]) {
     for (const m of r.missed ?? []) add(m.surah, m.ayah, m.word, m.text, m.kind === "bad" ? "mot faux ?" : "non reconnu", date);
     for (const m of r.mistakes ?? []) add(m.surah, m.ayah, m.word, m.text, "erreur signalée", date);
     for (const t of r.tajwid ?? []) {
+      if (t.fp) continue; // « pas une faute » : ne compte pas dans les points faibles
       add(t.surah, t.ayah, t.word, t.word_text, t.message, date);
       const label = ruleLabel(t.category, t.message);
       const cur = rules.get(label) ?? { label, count: 0, examples: [] };
@@ -125,7 +132,7 @@ export function weakPoints(history: SessionRecord[]) {
 }
 
 /** Regroupe les messages de tajwid par type (sans les détails du mot). */
-function ruleLabel(category: string, message: string): string {
+export function ruleLabel(category: string, message: string): string {
   if (category === "mot") return "Mots oubliés";
   if (category === "haraka") return message.startsWith("Haraka :") ? message : "Harakat";
   if (category === "harf") {
@@ -158,4 +165,63 @@ export function pickTestQuestion(memorized: number[], ayahCount: (s: number) => 
   if (!pool.length) return null;
   const p = pool[Math.floor(Math.random() * pool.length)];
   return { surah: p.surah, from: p.ayah, to: Math.min(ayahCount(p.surah), p.ayah + len - 1) };
+}
+
+// ---------------------------------------------------------------------------
+// Progression : objectif du jour, activité, part du Coran mémorisée
+// ---------------------------------------------------------------------------
+/** Début de chaque juz (sourate, ayah), découpage standard du mushaf de Médine. */
+export const JUZ_STARTS: [number, number][] = [[1,1],[2,142],[2,253],[3,93],[4,24],[4,148],[5,82],[6,111],[7,88],[8,41],[9,93],[11,6],[12,53],[15,1],[17,1],[18,75],[21,1],[23,1],[25,21],[27,56],[29,46],[33,31],[36,28],[39,32],[41,47],[46,1],[51,31],[58,1],[67,1],[78,1]];
+
+const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/** Minutes récitées par jour (clé locale AAAA-MM-JJ). */
+export function minutesByDay(history: SessionRecord[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of history) { const k = dayKey(new Date(r.date)); m.set(k, (m.get(k) ?? 0) + r.durationSec / 60); }
+  return m;
+}
+export function minutesToday(history: SessionRecord[], now = new Date()): number {
+  return Math.round(minutesByDay(history).get(dayKey(now)) ?? 0);
+}
+/** Les `weeks` dernières semaines, jour par jour (du plus ancien au plus récent, semaines du lundi au dimanche). */
+export function activityGrid(history: SessionRecord[], weeks = 12, now = new Date()): { key: string; minutes: number; future: boolean }[] {
+  const by = minutesByDay(history);
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const monday = new Date(today); monday.setDate(today.getDate() - ((today.getDay() + 6) % 7) - 7 * (weeks - 1));
+  const out: { key: string; minutes: number; future: boolean }[] = [];
+  for (let i = 0; i < weeks * 7; i++) {
+    const d = new Date(monday); d.setDate(monday.getDate() + i);
+    out.push({ key: dayKey(d), minutes: Math.round(by.get(dayKey(d)) ?? 0), future: d > today });
+  }
+  return out;
+}
+
+/** Pour chaque juz : ayahs au total et ayahs couvertes (sourates mémorisées + passages en cours). */
+export function juzProgress(memorized: number[], learning: { surah: number; from: number; to: number }[], ayahCount: (s: number) => number): { juz: number; total: number; done: number }[] {
+  const mem = new Set(memorized);
+  const known = (s: number, a: number) => mem.has(s) || learning.some((p) => p.surah === s && a >= p.from && a <= p.to);
+  const out = JUZ_STARTS.map((_, i) => ({ juz: i + 1, total: 0, done: 0 }));
+  let j = 0;
+  for (let s = 1; s <= 114; s++) {
+    const n = ayahCount(s);
+    for (let a = 1; a <= n; a++) {
+      while (j + 1 < JUZ_STARTS.length && (JUZ_STARTS[j + 1][0] < s || (JUZ_STARTS[j + 1][0] === s && JUZ_STARTS[j + 1][1] <= a))) j++;
+      out[j].total++;
+      if (known(s, a)) out[j].done++;
+    }
+  }
+  return out;
+}
+
+/** Ajoute un passage appris ; fusionne avec un passage voisin de la même sourate. */
+export function mergePassage(list: { surah: number; from: number; to: number }[], p: { surah: number; from: number; to: number }): { surah: number; from: number; to: number }[] {
+  const out: { surah: number; from: number; to: number }[] = [];
+  let cur = { ...p };
+  for (const x of list) {
+    if (x.surah === cur.surah && x.from <= cur.to + 1 && cur.from <= x.to + 1) cur = { surah: cur.surah, from: Math.min(x.from, cur.from), to: Math.max(x.to, cur.to) };
+    else out.push(x);
+  }
+  out.push(cur);
+  return out.sort((a, b) => a.surah - b.surah || a.from - b.from);
 }

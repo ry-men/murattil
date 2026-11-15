@@ -64,7 +64,10 @@ body[data-screen="memo"] #s-memo,
 body[data-screen="weak"] #s-weak,
 body[data-screen="test"] #s-test,
 body[data-screen="atelier-setup"] #s-atelier-setup,
-body[data-screen="atelier"] #s-atelier { display: flex; }
+body[data-screen="atelier"] #s-atelier,
+body[data-screen="stats"] #s-stats,
+body[data-screen="learn-setup"] #s-learn-setup,
+body[data-screen="learn"] #s-learn { display: flex; }
 
 /* Barre du haut */
 .top {
@@ -107,6 +110,8 @@ body[data-screen="atelier"] #s-atelier { display: flex; }
 .h-right { align-items: flex-end; text-align: right; flex: none; }
 .tag { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--hidden); }
 .tag.hifz { background: var(--ok-bg); color: var(--ok); }
+.tag.test { background: var(--warn-bg); color: var(--warn); }
+.tag.atelier { background: color-mix(in srgb, #8a4fd6 16%, transparent); color: #8a4fd6; }
 .foot { font-size: 12px; text-align: center; margin-top: 12px; }
 
 /* Boutons */
@@ -142,7 +147,7 @@ body[data-screen="atelier"] #s-atelier { display: flex; }
 .pulse span { width: 26px; height: 26px; border-radius: 50%; background: var(--ok); }
 @keyframes pulse { 50% { transform: scale(1.12); opacity: .75; } }
 
-.mushaf { font-family: "Amiri Quran", "Amiri", serif; font-size: var(--q-size); line-height: 2.25; text-align: justify; text-align-last: center; color: var(--ink); }
+.mushaf { font-family: "Amiri Quran", "Amiri", serif; font-size: calc(var(--q-size) * var(--q-scale, 1)); line-height: 2.25; text-align: justify; text-align-last: center; color: var(--ink); }
 .surah-head { text-align: center; font-size: 26px; margin: 6px auto 4px; padding: 2px 18px; border: 1.5px solid var(--accent); border-radius: 999px; width: fit-content; color: var(--accent); }
 .bsm { text-align: center; font-size: 26px; margin-bottom: 4px; }
 .verses { margin: 0; }
@@ -277,11 +282,11 @@ body[data-screen="atelier"] #s-atelier { display: flex; }
 .setup-body h3 { margin: 10px 0 0; font-size: 15px; }
 
 /* Atelier tajwid */
-.at-verse { font-size: calc(var(--q-size) * 1.1); text-align: center; text-align-last: center; margin: 4px 0; }
+.at-verse { font-size: calc(var(--q-size) * 1.1 * var(--q-scale, 1)); text-align: center; text-align-last: center; margin: 4px 0; }
 .at-verse .w { padding: 0 2px; }
 .at-audio { display: flex; flex-direction: column; gap: 6px; }
 .at-audio audio { width: 100%; }
-body.atelier .r-scroll .mushaf { font-size: calc(var(--q-size) * 1.15); }
+body.atelier .r-scroll .mushaf { font-size: calc(var(--q-size) * 1.15 * var(--q-scale, 1)); }
 .w.tj-sifa { text-decoration-color: #8a4fd6; }
 
 details.adv { margin-top: 4px; }
@@ -314,3 +319,41 @@ details.adv > summary { cursor: pointer; color: var(--muted, #777); font-size: 0
 /* Les fautes gardent leur couleur rouge. */
 .w.err .tjc { color: inherit; }
 .tjc-legend { list-style: none; padding: 0; margin: 6px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 13px; }
+
+/* v0.8 : objectif du jour, progression, apprentissage, réécoute */
+.small { font-size: 13px; margin: 6px 0 0; }
+.goal-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 16px; }
+.goal-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.goal-text strong { font-size: 15.5px; }
+.goal-text span { font-size: 13px; }
+.goal-more { font-size: 13px; flex: none; }
+.ring { width: 44px; height: 44px; flex: none; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 5; }
+.ring-bg { stroke: var(--hidden); }
+.ring-fg { stroke: var(--brand-2); stroke-linecap: round; stroke-dasharray: 113.1; stroke-dashoffset: 113.1; transition: stroke-dashoffset .5s; }
+.goal-card.done .ring-fg { stroke: var(--ok); }
+.mini-select { font: inherit; font-size: 14px; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
+.juz-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; margin-top: 12px; }
+.juz-cell { position: relative; aspect-ratio: 1; border-radius: 7px; background: var(--hidden); overflow: hidden; display: grid; place-items: center; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.juz-cell i { position: absolute; inset: auto 0 0 0; background: color-mix(in srgb, var(--brand-2) 55%, transparent); }
+.juz-cell b { position: relative; font-weight: 600; }
+.juz-cell.full { color: var(--ink); }
+.activity { display: grid; grid-template-rows: repeat(7, 1fr); grid-auto-flow: column; grid-auto-columns: 1fr; gap: 4px; margin-top: 8px; }
+.activity span { aspect-ratio: 1; border-radius: 4px; background: var(--hidden); }
+.activity span[data-l="1"] { background: color-mix(in srgb, var(--brand-2) 30%, var(--hidden)); }
+.activity span[data-l="2"] { background: color-mix(in srgb, var(--brand-2) 60%, var(--hidden)); }
+.activity span[data-l="3"] { background: var(--brand-2); }
+.activity span.future { opacity: .35; }
+.activity span.today { outline: 1.5px solid var(--accent); outline-offset: 1px; }
+.adv-body { display: flex; flex-direction: column; gap: 14px; padding-top: 8px; }
+.ln-steps { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 0; padding: 0; font-size: 12.5px; text-align: center; color: var(--muted); }
+.ln-steps li { padding: 6px 2px; border-radius: 10px; background: var(--hidden); }
+.ln-steps li.done { background: var(--ok-bg); color: var(--ok); }
+.ln-steps li.cur { background: var(--brand); color: #fff; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .ln-steps li.cur { color: #0d1512; } }
+#ln-audio { width: 100%; }
+.play-row { grid-column: 1 / -1; display: flex; gap: 14px; justify-content: flex-end; }
+.play-row .link { font-size: 12.5px; padding: 2px 0; text-decoration: none; color: var(--brand-2); font-weight: 600; }
+.mistakes li .play-row .fp-btn { color: var(--muted); font-weight: 400; text-decoration: underline; margin-left: auto; }
+.learn-banner { background: var(--ok-bg); color: var(--ok); border-radius: 12px; padding: 10px 14px; font-weight: 600; text-align: center; }
+.learn-banner.retry { background: var(--warn-bg); color: var(--warn); }

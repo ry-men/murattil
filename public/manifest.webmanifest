@@ -40,6 +40,17 @@
   ],
   "shortcuts": [
     {
+      "name": "Apprendre un passage",
+      "short_name": "Apprendre",
+      "url": "./?go=learn",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
       "name": "Hifz · Révision",
       "short_name": "Hifz",
       "url": "./?go=hifz",
@@ -65,17 +76,6 @@
       "name": "Test de mémoire",
       "short_name": "Test",
       "url": "./?go=test",
-      "icons": [
-        {
-          "src": "icon-192.png",
-          "sizes": "192x192"
-        }
-      ]
-    },
-    {
-      "name": "Atelier tajwid",
-      "short_name": "Atelier",
-      "url": "./?go=atelier",
       "icons": [
         {
           "src": "icon-192.png",

@@ -1,0 +1,28 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Texte du Coran (source Tilawa, non versionné)
+        run: |
+          mkdir -p public
+          curl -fL --retry 3 -o public/quran.json https://github.com/yazinsai/tilawa/releases/download/v0.2.0/quran.json
+          curl -fL --retry 3 -o public/zipformer_quran.json https://github.com/yazinsai/tilawa/releases/download/v0.3.0/zipformer_quran.json
+      - name: Types et build
+        run: npm run build
+      - name: Alignement du texte sur les 6236 ayahs
+        run: npx tsx tests/words.ts
+      - name: Révision, progression, calibrage
+        run: npx tsx tests/memo.ts
